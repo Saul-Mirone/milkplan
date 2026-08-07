@@ -12,19 +12,39 @@ opens the plan in your browser instead of the terminal prompt:
 - **Annotate** — select text, attach comments. Annotations survive concurrent edits
   (they are position-mapped, not text-matched) and orphaned comments keep their
   original excerpt.
-- **Approve / Request changes / Skip** — approvals can carry implementation notes;
-  rejections send your comments (anchored to quoted excerpts) back to Claude, which
-  revises and resubmits. Skip falls back to the normal terminal prompt.
+- **Approve / Request changes / Skip** — approvals can carry implementation notes
+  and optionally switch the session's permission mode (auto / accept edits /
+  manual); rejections send your comments (anchored to quoted excerpts) back to
+  Claude, which revises and resubmits. Skip falls back to the normal terminal
+  prompt.
 
-Everything runs locally: an ephemeral HTTP server on `127.0.0.1` with a single-use
-token, one process per review, no daemon, no network calls.
+![The milkplan review UI: the plan in a WYSIWYG editor with an annotation anchored to selected text](docs/assets/review-ui.png)
+
+Everything runs locally: an ephemeral HTTP server on `127.0.0.1` with a
+per-review token, one process per review, no daemon. The review itself makes no
+network calls (an `npx -y milkplan` hook command may contact the npm registry on
+a cold cache).
+
+## Requirements
+
+- Node.js ≥ 20
+- Claude Code with the `PermissionRequest` hook event (verified on v2.1.221;
+  the stricter approval envelope required since v2.1.199 is handled
+  automatically)
+- An interactive session — headless `claude -p` never reaches plan approval
+  (see Compatibility notes)
 
 ## Install
 
 ```sh
 npm install -g milkplan   # or: use npx below without installing
 milkplan init             # writes the hook into ~/.claude/settings.json
+milkplan test-fire        # verify: your browser opens a sample plan review
 ```
+
+`test-fire` exercises the full pipeline without a Claude Code session — if the
+browser opens and deciding prints a JSON line to the terminal, the install
+works.
 
 Per-project installs come in two flavors:
 
@@ -85,7 +105,7 @@ would silently re-download it from the registry on the next plan approval.)
 
 ```
 Claude Code ──ExitPlanMode──▶ PermissionRequest hook ──▶ milkplan CLI
-                                  resolve plan (session transcript → plan file)
+                                  resolve plan (planFilePath → transcript → inline)
                                   serve review UI on 127.0.0.1:<random>#token=…
                                               │
                               you edit / annotate / decide
@@ -99,6 +119,32 @@ Claude Code ──ExitPlanMode──▶ PermissionRequest hook ──▶ milkpla
 milkplan is **fail-open**: if the plan can't be located, the server can't start, or
 you skip, it exits silently and Claude Code shows its normal approval prompt. The
 hook `timeout` is the only thing that bounds how long a review can stay open.
+
+## Troubleshooting
+
+Every hook invocation appends to `~/.claude/milkplan.log` — that file is the
+first place to look.
+
+- **Nothing popped up.** Restart Claude Code after `milkplan init` (hooks are
+  read at startup), then check the log. If the hook fired, the log contains
+  `review UI at http://127.0.0.1:<port>/#token=…` — open that URL manually. If
+  the log has no entry at all, the hook never ran: confirm the entry exists in
+  your settings file and that your Claude Code version has `PermissionRequest`
+  hooks.
+- **It stopped working after a Node upgrade.** Source-checkout installs pin the
+  absolute path of the node binary; when a version manager (fnm/nvm) deletes
+  that version, the hook dies silently. Re-run `milkplan init` — it refreshes
+  stale entries in place.
+- **Closed the tab before deciding.** Recover the URL from the log, or press
+  Esc in the terminal to cancel the hook and use the native prompt. The hook
+  timeout (24h by default) eventually falls back to the native prompt too.
+- **Remote / headless (SSH, containers).** The browser cannot open on the
+  remote side. Grab the URL from the log and forward the port
+  (`ssh -L <port>:127.0.0.1:<port> <host>`), then open it locally. Set
+  `MILKPLAN_NO_BROWSER=1` to suppress launch attempts.
+- **Skip vs closing the tab.** Skip hands control back to the terminal prompt
+  immediately (annotations you typed are discarded); closing the tab leaves
+  Claude Code waiting until Esc or the timeout.
 
 ## Development
 
@@ -122,9 +168,10 @@ Set `MILKPLAN_NO_BROWSER=1` to suppress browser launch in automation.
   fires (verified empirically). This matches the product's intent: plan review
   needs a human at the keyboard.
 
-- Current Claude Code stores plans as files under `~/.claude/plans/`; milkplan
-  locates the session's plan through the transcript. Older versions that pass the
-  plan inline (`tool_input.plan`) are also supported.
+- Current Claude Code stores plans as files under `~/.claude/plans/` and passes
+  the path in the hook payload (`tool_input.planFilePath`), which milkplan uses
+  directly; it falls back to scanning the session transcript, and finally to the
+  inline `tool_input.plan` older versions send.
 - Claude does not re-read the plan file after approval, so edited plans are
   delivered through the hook's `additionalContext` (and the file is updated for
   consistency).
