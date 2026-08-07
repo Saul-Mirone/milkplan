@@ -6,7 +6,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, release } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -16,7 +16,12 @@ import type {
   ReviewPayload,
 } from '../shared/protocol'
 import { buildDecisionOutput } from './feedback'
-import { openBrowser } from './open-browser'
+import {
+  detectBrowserSupport,
+  openBrowser,
+  realLaunchIO,
+  type BrowserSupport,
+} from './open-browser'
 import { resolvePlan, type ResolveIO } from './resolve-plan'
 import {
   startReviewServer,
@@ -88,6 +93,7 @@ function buildSession(
   // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
   payload: HookPayload,
   getRunning: () => RunningServer | null,
+  onSettle: () => void,
 ): ReviewSession {
   return {
     payload: {
@@ -100,6 +106,7 @@ function buildSession(
     } satisfies ReviewPayload,
     token: randomBytes(16).toString('hex'),
     onDecision(decision) {
+      onSettle()
       if (decision.editedMarkdown !== undefined && plan.source === 'file') {
         try {
           writeFileSync(plan.path, decision.editedMarkdown)
@@ -119,10 +126,70 @@ function buildSession(
       process.stdout.write(`${JSON.stringify(output)}\n`, () => process.exit(0))
     },
     onSkip() {
+      onSettle()
       getRunning()?.close()
       process.exit(0)
     },
   }
+}
+
+/**
+ * Resolves how a browser can be opened here, passing through when none can be.
+ * Called before the server binds: with no reachable UI there is no point
+ * holding a port, and exiting here is what keeps a headless box from parking
+ * Claude Code on a listening socket until the hook timeout.
+ */
+function resolveBrowserSupport(): BrowserSupport {
+  const support = detectBrowserSupport({
+    platform: process.platform,
+    release: release(),
+    env: process.env,
+  })
+  if (support.kind === 'unavailable') {
+    // The port does not exist yet, so this log line is the user's only pointer
+    // back to a review: name the escape hatch rather than just the verdict.
+    log(
+      `no way to open a browser (${support.reason}); passing through — set MILKPLAN_NO_BROWSER=1 to serve the review anyway and open it yourself`,
+    )
+    process.exit(0)
+  }
+  return support
+}
+
+/**
+ * Last resort for the case detection cannot see: every launcher was missing, so
+ * nothing opened and nobody is coming. WSL with interop disabled is the classic
+ * one. `isSettled` guards the (vanishingly small) window where a decision is
+ * already in flight.
+ */
+function passThroughOnLaunchFailure(
+  running: { readonly close: () => void },
+  isSettled: () => boolean,
+): () => void {
+  return () => {
+    if (isSettled()) return
+    log('every browser launcher failed to start; passing through')
+    try {
+      running.close()
+    } catch {
+      // Runs inside a spawn error handler, where a throw would be an uncaught
+      // exception rather than a passthrough. Exiting matters more than closing.
+    }
+    process.exit(0)
+  }
+}
+
+/** Parses the hook payload, passing through when it is not one. */
+function parsePayloadOrPassThrough(stdinJson: string): HookPayload {
+  const payload = parsePayload(stdinJson)
+  if (payload === null) {
+    log('malformed hook payload; passing through')
+    process.exit(0)
+  }
+  log(
+    `invoked: event=${payload.hook_event_name ?? '?'} session=${payload.session_id}`,
+  )
+  return payload
 }
 
 /**
@@ -134,15 +201,7 @@ export async function runHook(stdinJson: string): Promise<void> {
   process.on('SIGINT', () => process.exit(0))
   process.on('SIGTERM', () => process.exit(0))
 
-  const payload = parsePayload(stdinJson)
-  if (payload === null) {
-    log('malformed hook payload; passing through')
-    process.exit(0)
-  }
-
-  log(
-    `invoked: event=${payload.hook_event_name ?? '?'} session=${payload.session_id}`,
-  )
+  const payload = parsePayloadOrPassThrough(stdinJson)
 
   const plan = resolvePlan(payload, realIO)
   if (plan.source === 'none') {
@@ -155,8 +214,18 @@ export async function runHook(stdinJson: string): Promise<void> {
       : 'plan from tool_input',
   )
 
+  const support = resolveBrowserSupport()
+
   let running: RunningServer | null = null
-  const session = buildSession(plan, payload, () => running)
+  let settled = false
+  const session = buildSession(
+    plan,
+    payload,
+    () => running,
+    () => {
+      settled = true
+    },
+  )
 
   // dist/cli.mjs sits next to dist/ui after build.
   const uiDir = fileURLToPath(new URL('./ui', import.meta.url))
@@ -168,7 +237,12 @@ export async function runHook(stdinJson: string): Promise<void> {
   }
 
   log(`review UI at ${running.url} (open manually if no browser appeared)`)
-  openBrowser(running.url)
+  openBrowser(
+    running.url,
+    support,
+    realLaunchIO,
+    passThroughOnLaunchFailure(running, () => settled),
+  )
   // No further code: the listening server keeps the process alive until a
   // decision, a skip, a signal, or the Claude Code hook timeout.
 }

@@ -116,9 +116,10 @@ Claude Code ──ExitPlanMode──▶ PermissionRequest hook ──▶ milkpla
               skip / any failure ──▶ passthrough to the terminal prompt
 ```
 
-milkplan is **fail-open**: if the plan can't be located, the server can't start, or
-you skip, it exits silently and Claude Code shows its normal approval prompt. The
-hook `timeout` is the only thing that bounds how long a review can stay open.
+milkplan is **fail-open**: if the plan can't be located, the server can't start, no
+browser can be opened, or you skip, it exits silently and Claude Code shows its
+normal approval prompt. The hook `timeout` is the only thing that bounds how long a
+review can stay open.
 
 ## Troubleshooting
 
@@ -138,10 +139,12 @@ first place to look.
 - **Closed the tab before deciding.** Recover the URL from the log, or press
   Esc in the terminal to cancel the hook and use the native prompt. The hook
   timeout (24h by default) eventually falls back to the native prompt too.
-- **Remote / headless (SSH, containers).** The browser cannot open on the
-  remote side. Grab the URL from the log and forward the port
-  (`ssh -L <port>:127.0.0.1:<port> <host>`), then open it locally. Set
-  `MILKPLAN_NO_BROWSER=1` to suppress launch attempts.
+- **Remote / headless (SSH, containers).** With no display and no `$BROWSER`,
+  milkplan passes straight through to the terminal prompt rather than serving a
+  UI nobody can reach. To review in a browser anyway, set
+  `MILKPLAN_NO_BROWSER=1` so it serves and waits, then forward the port
+  (`ssh -L <port>:127.0.0.1:<port> <host>`) and open the URL from the log
+  locally. Setting `$BROWSER` works too, and keeps the automatic launch.
 - **Skip vs closing the tab.** Skip hands control back to the terminal prompt
   immediately (annotations you typed are discarded); closing the tab leaves
   Claude Code waiting until Esc or the timeout.
@@ -159,7 +162,14 @@ pnpm smoke        # test-fire: full hook loop against a synthesized session
 `milkplan test-fire` exercises the real code path: it synthesizes a session
 transcript, resolves it, starts the server, and opens the browser; the decision JSON
 lands on stdout exactly as Claude Code would receive it.
-Set `MILKPLAN_NO_BROWSER=1` to suppress browser launch in automation.
+
+Two environment variables affect the browser launch:
+
+- `MILKPLAN_NO_BROWSER=1` — serve and wait, but never launch anything. This is
+  the automation escape hatch; it never turns into a passthrough.
+- `BROWSER` — the command to launch instead of the platform default. It is taken
+  as a bare command and handed the URL as a single argument (no `%s` expansion,
+  no colon-separated lists). Honored everywhere except native Windows.
 
 ## Compatibility notes
 
@@ -167,6 +177,21 @@ Set `MILKPLAN_NO_BROWSER=1` to suppress browser launch in automation.
   `ExitPlanMode` at all — the model prints its plan and stops, so the hook never
   fires (verified empirically). This matches the product's intent: plan review
   needs a human at the keyboard.
+
+- **WSL.** Your browser lives on the Windows side, so milkplan opens it there:
+  `wslview` → `powershell.exe Start-Process` → `cmd.exe /c start`, trying the
+  next one only when a launcher is not installed. That order holds even under
+  WSLg, where `xdg-open` is kept as a last resort; set `BROWSER=xdg-open` to
+  prefer a Linux browser instead. The review URL is loopback, which WSL2's
+  default `localhostForwarding` (and WSL1's shared network stack, and mirrored
+  networking mode) relays into the distro — with `localhostForwarding=false` in
+  `.wslconfig` the browser opens but cannot reach the server.
+
+- **No GUI browser.** On a box with no `DISPLAY`, no `WAYLAND_DISPLAY` and no
+  `$BROWSER` — SSH sessions, containers — milkplan passes through to the
+  terminal prompt instead of holding a port nobody can reach. Same if every
+  launcher turns out to be missing (WSL with interop disabled, for instance).
+  See Troubleshooting for reviewing over a forwarded port.
 
 - Current Claude Code stores plans as files under `~/.claude/plans/` and passes
   the path in the hook payload (`tool_input.planFilePath`), which milkplan uses

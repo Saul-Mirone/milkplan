@@ -25,9 +25,10 @@ Claude Code ──ExitPlanMode──▶ PermissionRequest hook ──stdin JSON�
                          prints hook JSON to stdout, exits 0
 ```
 
-**Fail-open rule:** on ANY failure (no plan found, server can't start, browser can't
-open) the CLI prints nothing to stdout and exits 0 — Claude Code then falls back to
-the normal terminal approval prompt. The UI's "Skip review" button does the same.
+**Fail-open rule:** on ANY failure (no plan found, server can't start, no browser
+launcher is available, every launcher fails to start) the CLI prints nothing to
+stdout and exits 0 — Claude Code then falls back to the normal terminal approval
+prompt. The UI's "Skip review" button does the same.
 
 **stdout discipline:** the process writes NOTHING to stdout except the final
 single-line hook JSON. All logging goes to stderr.
@@ -210,17 +211,51 @@ export async function runHook(stdinJson: string): Promise<void>
      stderr); (b) `buildDecisionOutput`; (c) write single-line JSON + `\n` to stdout;
      (d) close server, `process.exit(0)`.
    - `onSkip`: close server, exit 0 with no output.
-4. `startReviewServer`, `openBrowser(url)` (failure → print URL to stderr and keep
-   waiting; if the SERVER fails to start → passthrough).
-5. SIGINT/SIGTERM → exit 0 silently. Wait indefinitely (hook timeout is the backstop).
+4. `detectBrowserSupport` BEFORE binding: `unavailable` → passthrough (a review
+   nobody can reach would otherwise hold the port until the hook timeout).
+5. `startReviewServer` (failure → passthrough), then `openBrowser(url, support,
+realLaunchIO, onExhausted)`. Every launcher missing → passthrough; a launcher
+   that started but opened nothing → print URL to stderr and keep waiting.
+6. SIGINT/SIGTERM → exit 0 silently. Wait indefinitely (hook timeout is the backstop).
 
 Passthrough = print nothing, `process.exit(0)`.
 
 ### `src/cli/open-browser.ts`
 
-`export function openBrowser(url: string): void` — darwin `open <url>`, win32
-`cmd /c start "" <url>`, else `xdg-open <url>`. `spawn(..., {detached: true,
-stdio: 'ignore'}).unref()`, wrap in try/catch, never throw.
+Pure decision + thin spawner, so every branch is unit-testable without spawning
+anything or trusting the host OS:
+
+```ts
+detectBrowserSupport(env: BrowserEnv): BrowserSupport   // pure
+buildCandidates(support, url): readonly Candidate[]     // pure
+openBrowser(url, support, io: LaunchIO, onExhausted?): void
+```
+
+`BrowserSupport` is `suppressed` (MILKPLAN_NO_BROWSER — serve, never launch,
+never passthrough), `unavailable` (→ passthrough), or `available` with an ordered
+launcher chain:
+
+| env                             | chain                                                                                                                                                                   |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| darwin                          | `$BROWSER?` → `open <url>`                                                                                                                                              |
+| win32                           | `cmd.exe /c start "" <url>` (`$BROWSER` not honored)                                                                                                                    |
+| WSL                             | `$BROWSER?` → `wslview` → `powershell.exe -NoProfile -NonInteractive -Command "Start-Process '<url>'"` → `cmd.exe /c start "" <url>` → `xdg-open` (only with a display) |
+| linux w/ display                | `$BROWSER?` → `xdg-open <url>`                                                                                                                                          |
+| linux w/o display or `$BROWSER` | `unavailable`                                                                                                                                                           |
+
+WSL is detected on `platform === 'linux'` plus `WSL_DISTRO_NAME`, `WSL_INTEROP`,
+or a lowercased `os.release()` containing `microsoft` (WSL1 capitalizes it). The
+Windows launchers precede `xdg-open` even under WSLg because the user's browser
+is on the Windows side.
+
+The chain advances **only** on the spawn `error` event (the launcher is not
+installed). Exit codes are ignored: they disagree across launchers — `start`
+returns as soon as it hands off and `explorer.exe` returns 1 even on success,
+which is why `explorer.exe` is not in the chain at all. Launchers still run
+`spawn(..., {detached: true, stdio: 'ignore'}).unref()` and never throw.
+
+Every candidate must carry the URL's `#token=` fragment verbatim; the UI falls
+back to `DEV_TOKEN` without it, which yields a page that loads and then 403s.
 
 ### `src/cli/init.ts`
 
@@ -369,6 +404,14 @@ involvement.
   drive with `fetch`: 403 without token, review payload roundtrip, decision flow
   invokes `onDecision`, skip invokes `onSkip`, path traversal on static route is
   rejected.
+- `tests/open-browser.detect.test.ts`: injected `BrowserEnv` — suppression,
+  per-platform chains, `$BROWSER` precedence, headless verdict, WSL via each of
+  the three signals (incl. WSL1's capitalized kernel string), WSLg ordering, and
+  the negatives (stock kernel, WSL vars on native win32).
+- `tests/open-browser.test.ts`: argv per launcher (PowerShell quoting, `start`'s
+  empty title arg, `#token=` survives everywhere) and chain behavior against a
+  fake `LaunchIO` — stop on first success, advance past a missing launcher,
+  report exhaustion once, and never launch or report exhaustion when suppressed.
 
 ## Milestones
 
