@@ -1,0 +1,7 @@
+{"type":"user","message":{"role":"user","content":"Please plan the rate limiting feature"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll write the plan now."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01","name":"Write","input":{"file_path":"/Users/test/.claude/plans/sunny-rolling-otter.md","content":"# Stale draft content (disk is authoritative)"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01","content":"File created successfully"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_02","name":"Edit","input":{"file_path":"/Users/test/.claude/plans/sunny-rolling-otter.md","old_string":"Stale","new_string":"Fresh"}}]}}
+this line is intentionally not valid JSON and must be skipped by the parser
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_03","name":"ExitPlanMode","input":{}}]}}

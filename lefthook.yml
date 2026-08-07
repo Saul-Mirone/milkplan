@@ -1,0 +1,12 @@
+pre-commit:
+  commands:
+    oxlint:
+      priority: 1
+      glob: '*.{ts,tsx,mts,cts,mjs,cjs,js,jsx}'
+      run: pnpm exec oxlint --fix {staged_files}
+      stage_fixed: true
+    oxfmt:
+      priority: 2
+      glob: '*.{ts,tsx,mts,cts,mjs,cjs,js,jsx,json,jsonc,md,mdx,yml,yaml,css}'
+      run: pnpm exec oxfmt {staged_files}
+      stage_fixed: true

@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"Just a question"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Here is an answer without any plan."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_09","name":"Write","input":{"file_path":"/Users/test/project/notes.md","content":"not a plan file"}}]}}
