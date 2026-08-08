@@ -67,6 +67,20 @@ function messageContentOf(entry: unknown): unknown {
   return message.content
 }
 
+/**
+ * Reads a plan file, treating a blank one as unreadable. An empty file is not
+ * a plan: without this, a truncated or half-written plan file would win over a
+ * perfectly good `tool_input.plan` and open the review on a blank editor.
+ */
+function readPlanFile(
+  io: DeepReadonly<ResolveIO>,
+  path: string,
+): string | null {
+  const markdown = io.readFile(path)
+  if (markdown === null || markdown.trim() === '') return null
+  return markdown
+}
+
 export function resolvePlan(
   payload: DeepReadonly<HookPayload>,
   io: DeepReadonly<ResolveIO>,
@@ -75,7 +89,7 @@ export function resolvePlan(
   // directly in tool_input — no transcript archaeology needed.
   const direct = directPlanPath(payload, io.homedir())
   if (direct !== null) {
-    const markdown = io.readFile(direct)
+    const markdown = readPlanFile(io, direct)
     if (markdown !== null) return { source: 'file', path: direct, markdown }
   }
 
@@ -99,7 +113,7 @@ export function resolvePlan(
         if (planPath === null) continue
         // Disk content is authoritative (an Edit entry only carries a
         // fragment); on read failure keep scanning for an earlier reference.
-        const markdown = io.readFile(planPath)
+        const markdown = readPlanFile(io, planPath)
         if (markdown === null) continue
         return { source: 'file', path: planPath, markdown }
       }
