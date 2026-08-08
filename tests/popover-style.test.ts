@@ -28,16 +28,29 @@ describe('popoverStyle', () => {
     expect(Number(top)).toBeLessThan(WIDE.height)
   })
 
-  it('keeps the left margin rather than going negative on a viewport narrower than itself', () => {
-    // 320 + 16 > 300, so the inner Math.min goes negative here; the outer
-    // Math.max is what stops the box being positioned off the left edge.
-    expect(
-      popoverStyle({ left: 40, bottom: 100 }, { width: 300, height: 900 }),
-    ).toEqual({ left: 8, top: 108, width: 320 })
+  it('shrinks to fit a viewport narrower than the popover instead of overflowing it', () => {
+    // Moving the box cannot rescue this case: the dialog is position:fixed and
+    // its actions row is right-aligned, so a fixed 320 would leave Save and
+    // Cancel off-screen with no scrolling that reaches them.
+    const style = popoverStyle(
+      { left: 40, bottom: 100 },
+      { width: 300, height: 900 },
+    )
+    expect(style).toEqual({ left: 8, top: 108, width: 284 })
+    expect(Number(style.left) + Number(style.width)).toBeLessThanOrEqual(
+      300 - 8,
+    )
   })
 
-  it('always reports the fixed popover width, so the caller never has to', () => {
-    for (const viewport of [WIDE, { width: 320, height: 200 }])
-      expect(popoverStyle({ left: 0, bottom: 0 }, viewport).width).toBe(320)
+  it('keeps the full width whenever the viewport has room for it', () => {
+    for (const width of [1440, 400, 336])
+      expect(
+        popoverStyle({ left: 0, bottom: 0 }, { width, height: 900 }).width,
+      ).toBe(320)
+  })
+
+  it('never reports a negative width, however absurd the viewport', () => {
+    const style = popoverStyle({ left: 0, bottom: 0 }, { width: 4, height: 4 })
+    expect(Number(style.width)).toBeGreaterThanOrEqual(0)
   })
 })

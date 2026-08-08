@@ -28,25 +28,32 @@ export interface Viewport {
  * Places the popover next to the annotated text, clamped into the viewport.
  *
  * This arithmetic is the only thing keeping the comment box reachable in the
- * two cases it exists for: an annotation at the right edge (unclamped, the box
+ * cases it exists for: an annotation at the right edge (unclamped, the box
  * would hang off-screen with its buttons unreachable) and one near the bottom
- * of a long plan (it would open below the fold). The left clamp is applied
- * outermost so a viewport narrower than the popover still yields the margin
- * rather than a negative offset.
+ * of a long plan (it would open below the fold).
+ *
+ * The width is clamped as well as the offset. A viewport narrower than the
+ * popover cannot be fixed by moving it: the dialog is position:fixed and its
+ * actions row is right-aligned, so a fixed 320 would leave Save and Cancel
+ * off-screen with no scrolling that reaches them.
  */
 export function popoverStyle(
   coords: DeepReadonly<PopoverCoords>,
   viewport: DeepReadonly<Viewport>,
 ): CSSProperties {
+  const width = Math.max(
+    0,
+    Math.min(POPOVER_WIDTH, viewport.width - 2 * VIEWPORT_MARGIN),
+  )
   const left = Math.max(
     VIEWPORT_MARGIN,
-    Math.min(coords.left, viewport.width - POPOVER_WIDTH - VIEWPORT_MARGIN),
+    Math.min(coords.left, viewport.width - width - VIEWPORT_MARGIN),
   )
   const top = Math.min(
     coords.bottom + VIEWPORT_MARGIN,
     viewport.height - POPOVER_HEIGHT,
   )
-  return { left, top, width: POPOVER_WIDTH }
+  return { left, top, width }
 }
 
 /**

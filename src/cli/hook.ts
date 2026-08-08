@@ -59,6 +59,28 @@ function writeEditedPlan(
   }
 }
 
+/**
+ * Returns a guard that admits the first caller and turns every later one away.
+ *
+ * handleApiRequest is stateless and server.close() only stops NEW connections —
+ * an established keep-alive socket keeps being served — so a duplicated tab
+ * (both carry the same #token= fragment) can land a second decision in the
+ * window between the first stdout write and the exit inside its flush
+ * callback. That would write the plan file twice and put two JSON lines on
+ * stdout, which is an unparseable hook response: Claude Code discards the
+ * whole review. Ignoring the straggler is the fail-safe answer, and the
+ * process is on its way out either way.
+ */
+function oneAnswer(onSettle: () => void): () => boolean {
+  let answered = false
+  return () => {
+    if (answered) return false
+    answered = true
+    onSettle()
+    return true
+  }
+}
+
 export interface SessionDeps {
   plan: FoundPlan
   payload: HookPayload
@@ -80,6 +102,7 @@ export function buildSession(
   deps: SessionDeps,
 ): ReviewSession {
   const { plan, payload, getRunning, onSettle, io } = deps
+  const claim = oneAnswer(onSettle)
   return {
     payload: {
       plan: plan.markdown,
@@ -91,7 +114,7 @@ export function buildSession(
     } satisfies ReviewPayload,
     token: randomBytes(16).toString('hex'),
     onDecision(decision) {
-      onSettle()
+      if (!claim()) return
       writeEditedPlan(
         plan.source === 'file' ? plan.path : null,
         editedMarkdownOf(decision),
@@ -108,7 +131,7 @@ export function buildSession(
       io.writeStdout(`${JSON.stringify(output)}\n`, () => io.exit(0))
     },
     onSkip() {
-      onSettle()
+      if (!claim()) return
       getRunning()?.close()
       io.exit(0)
     },
