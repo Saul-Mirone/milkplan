@@ -19,4 +19,8 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run format:check
       - run: pnpm run typecheck
+      # dist/ is gitignored and the e2e suite drives the built CLI, so the
+      # build has to run before the tests — and a broken build is otherwise
+      # invisible until someone publishes.
+      - run: pnpm run build
       - run: pnpm run test
