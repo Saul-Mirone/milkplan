@@ -4,7 +4,11 @@ import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 
 import { handleApiRequest, type ReviewSession } from './src/cli/server'
-import { DEV_TOKEN, type DecisionRequest } from './src/shared/protocol'
+import {
+  DEV_TOKEN,
+  type DecisionRequest,
+  type PlanVersion,
+} from './src/shared/protocol'
 import type { DeepReadonly } from './src/shared/readonly'
 
 export default defineConfig({
@@ -31,6 +35,30 @@ export default defineConfig({
 })
 
 /**
+ * Two static earlier rounds so `pnpm dev` demos the diff overlay: round1 →
+ * current shows block-level adds/removes, round2 → current (the default
+ * comparison) a single inline value change.
+ */
+function fixtureHistory(planPath: string): PlanVersion[] {
+  const fixture = (name: string): string =>
+    readFileSync(resolve(process.cwd(), 'fixtures', name), 'utf8')
+  return [
+    {
+      ts: Date.now() - 40 * 60_000,
+      round: 1,
+      planPath,
+      markdown: fixture('sample-plan.round1.md'),
+    },
+    {
+      ts: Date.now() - 12 * 60_000,
+      round: 2,
+      planPath,
+      markdown: fixture('sample-plan.round2.md'),
+    },
+  ]
+}
+
+/**
  * Mounts the real /api handlers on the Vite dev server, backed by fixtures, so
  * the full UI can be developed without a live Claude Code session. Decisions are
  * pretty-printed to the terminal instead of a hook stdout.
@@ -46,9 +74,7 @@ function devReviewApi(): Plugin {
       const session: ReviewSession = {
         payload: {
           plan: readFileSync(planPath, 'utf8'),
-          // Dev history arrives with the diff-overlay UI; empty keeps the
-          // payload honest for a first-round session.
-          history: [],
+          history: fixtureHistory(planPath),
           meta: {
             planPath,
             cwd: process.cwd(),

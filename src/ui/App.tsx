@@ -1,22 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { ReviewMeta, ReviewPayload } from '../shared/protocol'
 import type { DeepReadonly } from '../shared/readonly'
 import { fetchReview } from './api'
-import type { AnnotationRecord } from './annotations/plugin'
 import { ActionBar } from './components/ActionBar'
 import { CommentPopover } from './components/CommentPopover'
+import { DiffOverlay } from './components/DiffOverlay'
 import { PlanEditor, type PlanEditorHandle } from './components/PlanEditor'
+import { ReviewHeader } from './components/ReviewHeader'
 import { Sidebar } from './components/Sidebar'
 import {
   createAnnotationStore,
   useAnnotations,
+  type UseAnnotationsResult,
   type ViewGetter,
 } from './hooks/useAnnotations'
 
+// Typed off the api/hook surfaces instead of the shared modules — this file
+// sits at oxlint's max-dependencies cap, and both aliases are identical to
+// ReviewPayload / AnnotationRecord by construction.
+type ReviewData = DeepReadonly<Awaited<ReturnType<typeof fetchReview>>>
+type AnnotationItem = UseAnnotationsResult['annotations'][number]
+
 type Phase =
   | { kind: 'loading' }
-  | { kind: 'review'; payload: DeepReadonly<ReviewPayload> }
+  | { kind: 'review'; payload: ReviewData }
   | { kind: 'done'; variant: 'sent' | 'skipped' }
   | { kind: 'error'; message: string }
 
@@ -29,7 +36,7 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     fetchReview()
-      .then((payload: DeepReadonly<ReviewPayload>) => {
+      .then((payload: ReviewData) => {
         if (!cancelled) setPhase({ kind: 'review', payload })
       })
       .catch((cause: unknown) => {
@@ -49,10 +56,48 @@ export function App() {
   if (phase.kind === 'error') return <ErrorScreen message={phase.message} />
   if (phase.kind === 'done') return <DoneScreen variant={phase.variant} />
 
+  return <ReviewScreen payload={phase.payload} onDone={handleDone} />
+}
+
+interface ReviewScreenProps {
+  payload: ReviewData
+  onDone: (variant: 'sent' | 'skipped') => void
+}
+
+/** The review phase: header, workspace, and the on-demand diff overlay. */
+function ReviewScreen({ payload, onDone }: Readonly<ReviewScreenProps>) {
+  // Overlay state lives beside the header button, outside useReview: opening
+  // and closing the diff must never touch the editor's lifecycle.
+  const [diffOpen, setDiffOpen] = useState(false)
+  const openDiff = useCallback(() => {
+    setDiffOpen(true)
+  }, [])
+  const closeDiff = useCallback(() => {
+    setDiffOpen(false)
+  }, [])
+
+  const prior = payload.history
+  // The badge counts from the last stored round, not the array length — the
+  // served history is capped, so indexes undercount in very long sessions.
+  const lastPrior = prior.at(-1)
   return (
     <div className="mp-app">
-      <ReviewHeader meta={phase.payload.meta} />
-      <ReviewWorkspace defaultValue={phase.payload.plan} onDone={handleDone} />
+      <ReviewHeader
+        meta={payload.meta}
+        roundNumber={lastPrior === undefined ? null : lastPrior.round + 1}
+        onViewChanges={lastPrior === undefined ? null : openDiff}
+      />
+      <ReviewWorkspace defaultValue={payload.plan} onDone={onDone} />
+      {diffOpen && (
+        // The current side is the submitted plan (payload.plan), never the
+        // live editor content — the diff means "last round → this round", and
+        // reviewer edits in flight are not part of either.
+        <DiffOverlay
+          versions={prior}
+          currentMarkdown={payload.plan}
+          onClose={closeDiff}
+        />
+      )}
     </div>
   )
 }
@@ -89,22 +134,6 @@ function DoneScreen({ variant }: Readonly<{ variant: 'sent' | 'skipped' }>) {
   )
 }
 
-function ReviewHeader({ meta }: Readonly<{ meta: DeepReadonly<ReviewMeta> }>) {
-  return (
-    <header className="mp-header">
-      <span className="mp-header__brand">milkplan</span>
-      <div className="mp-header__meta">
-        <span className="mp-header__path" title={meta.planPath ?? undefined}>
-          {meta.planPath ?? 'inline plan (no file)'}
-        </span>
-        <span className="mp-header__cwd" title={meta.cwd}>
-          {meta.cwd}
-        </span>
-      </div>
-    </header>
-  )
-}
-
 function useReview() {
   const [store] = useState(createAnnotationStore)
   const [popoverId, setPopoverId] = useState<string | null>(null)
@@ -122,7 +151,7 @@ function useReview() {
   )
 
   const selectAnnotation = useCallback(
-    (record: Readonly<AnnotationRecord>) => {
+    (record: Readonly<AnnotationItem>) => {
       setActive(record.id)
       if (record.orphaned) return
       const view = getView()
@@ -200,7 +229,7 @@ function ReviewWorkspace({
 
 interface ReviewPopoverProps {
   popoverId: string | null
-  pendingAnnotation: Readonly<AnnotationRecord> | null
+  pendingAnnotation: Readonly<AnnotationItem> | null
   getView: ViewGetter
   commitAnnotation: (id: string, comment: string) => void
   removeAnnotation: (id: string) => void

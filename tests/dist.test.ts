@@ -1,4 +1,4 @@
-import { access, constants, readFile, stat } from 'node:fs/promises'
+import { access, constants, readdir, readFile, stat } from 'node:fs/promises'
 import { beforeAll, describe, expect, it } from 'vitest'
 
 import { VERSION } from '../src/cli/version'
@@ -9,6 +9,7 @@ const PACKAGE_JSON = new URL('../package.json', import.meta.url)
 
 beforeAll(requireBuiltCli)
 
+// oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('the published bundle', () => {
   it('starts with a node shebang, since package.json exposes it as a bin', () => {
     // npm links bin entries as executables; without the shebang the shell
@@ -40,6 +41,21 @@ describe('the published bundle', () => {
     // yields a review page that 404s into the SPA fallback forever.
     const index = new URL('../dist/ui/index.html', import.meta.url)
     await expect(access(index, constants.R_OK)).resolves.toBeUndefined()
+  })
+
+  it('ships the rule hiding the diff Accept/Reject controls in the overlay', async () => {
+    // Load-bearing canary: the diff overlay is read-only ONLY because this
+    // rule hides the per-chunk controls, which the diff component renders
+    // unconditionally with no config switch. Asserting on the bare
+    // `milkdown-diff-controls` class proves nothing — the component's own
+    // stylesheet already ships that name.
+    const assets = new URL('../dist/ui/assets/', import.meta.url)
+    const names = await readdir(assets)
+    const cssName = names.find((name) => /^index-.*\.css$/u.test(name))
+    expect(cssName).toBeDefined()
+
+    const css = await readFile(new URL(String(cssName), assets), 'utf8')
+    expect(css).toContain('.mp-diff-overlay .milkdown .milkdown-diff-controls')
   })
 
   it('reports the same version the source constant claims', async () => {
