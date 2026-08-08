@@ -36,7 +36,12 @@
   "overrides": [
     {
       "files": ["tests/**", "**/*.test.ts", "**/*.test.tsx"],
-      "env": { "vitest": true }
+      "env": { "vitest": true },
+      "rules": {
+        "react-perf/jsx-no-new-function-as-prop": "off",
+        "react-perf/jsx-no-new-object-as-prop": "off",
+        "react-perf/jsx-no-new-array-as-prop": "off"
+      }
     }
   ]
 }

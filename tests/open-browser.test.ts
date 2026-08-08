@@ -4,6 +4,7 @@ import {
   buildCandidates,
   detectBrowserSupport,
   openBrowser,
+  realLaunchIO,
   type BrowserEnv,
   type Candidate,
   type LaunchIO,
@@ -104,6 +105,7 @@ const wslSupport = detectBrowserSupport({
   env: { WSL_DISTRO_NAME: 'Ubuntu' },
 })
 
+// oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('openBrowser', () => {
   it('stops at the first launcher that starts', () => {
     const { io, commands } = recordingIO(() => false)
@@ -152,5 +154,87 @@ describe('openBrowser', () => {
     })
     expect(commands).toEqual([])
     expect(exhausted).toBe(0)
+  })
+
+  it('does not skip a candidate when a launcher reports its failure twice', () => {
+    // child.on('error') should fire once, but a launcher that emits both an
+    // error and a synchronous throw would otherwise consume two candidates per
+    // failure and reach `exhausted` with untried launchers left.
+    const commands: string[] = []
+    const io: LaunchIO = {
+      spawn(command, _args, onError) {
+        commands.push(command)
+        onError()
+        onError()
+      },
+    }
+    let exhausted = 0
+    openBrowser(URL, wslSupport, io, () => {
+      exhausted += 1
+    })
+    expect(commands).toEqual(['wslview', 'powershell.exe', 'cmd.exe'])
+    expect(exhausted).toBe(1)
+  })
+
+  it('walks the chain when failures arrive asynchronously, the way a real ENOENT does', () => {
+    // Every other fake here calls onError synchronously; a real spawn reports
+    // ENOENT on a later tick, so the recursion has to survive re-entry across
+    // microtasks rather than only inside one call frame.
+    const commands: string[] = []
+    const io: LaunchIO = {
+      spawn(command, _args, onError) {
+        commands.push(command)
+        queueMicrotask(onError)
+      },
+    }
+    return new Promise<void>((resolvePromise) => {
+      openBrowser(URL, wslSupport, io, () => {
+        expect(commands).toEqual(['wslview', 'powershell.exe', 'cmd.exe'])
+        resolvePromise()
+      })
+    })
+  })
+
+  it('omitting onExhausted is allowed and must not throw when every launcher is missing', () => {
+    // The parameter is optional; hook.ts is the only caller that passes it.
+    const { io } = recordingIO(() => true)
+    expect(() => {
+      openBrowser(URL, wslSupport, io)
+    }).not.toThrow()
+  })
+})
+
+describe('realLaunchIO', () => {
+  it('reports a missing launcher through onError instead of throwing', async () => {
+    // This is the one signal openBrowser advances on. If a future change
+    // swallowed it, the chain would stop at the first absent launcher and the
+    // hook would sit on a port until the 86400s timeout.
+    const called = new Promise<string>((resolvePromise) => {
+      realLaunchIO.spawn('milkplan-no-such-launcher', [URL], () => {
+        resolvePromise('onError')
+      })
+    })
+    const outcome = await Promise.race([
+      called,
+      new Promise<string>((resolvePromise) => {
+        setTimeout(() => {
+          resolvePromise('onError never fired')
+        }, 2000)
+      }),
+    ])
+    expect(outcome).toBe('onError')
+  })
+
+  it('treats a synchronous spawn throw as a failed launch too', () => {
+    // A NUL byte makes spawn throw straight away rather than emit 'error'.
+    // The try/catch is what stops that becoming an uncaught exception in the
+    // middle of the hook, which would mean no stdout and no exit at all.
+    let failures = 0
+    expect(() => {
+      realLaunchIO.spawn('bad\u0000command', [URL], () => {
+        failures += 1
+      })
+    }).not.toThrow()
+    expect(failures).toBe(1)
   })
 })

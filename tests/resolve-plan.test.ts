@@ -1,52 +1,15 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-import { resolvePlan, type ResolveIO } from '../src/cli/resolve-plan'
-import type { HookPayload } from '../src/shared/protocol'
-import type { DeepReadonly } from '../src/shared/readonly'
-
-const HOME = '/Users/test'
-const TRANSCRIPT_PATH = `${HOME}/.claude/projects/session.jsonl`
-const FIXTURE_PLAN_PATH = `${HOME}/.claude/plans/sunny-rolling-otter.md`
-
-function fixture(name: string): string {
-  return readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8')
-}
-
-function makeIO(files: DeepReadonly<Record<string, string>>): ResolveIO {
-  return {
-    readFile: (path) => files[path] ?? null,
-    homedir: () => HOME,
-  }
-}
-
-function makePayload(
-  overrides: DeepReadonly<Partial<HookPayload>> = {},
-): HookPayload {
-  return {
-    session_id: 'test-session',
-    transcript_path: TRANSCRIPT_PATH,
-    cwd: `${HOME}/project`,
-    ...overrides,
-  }
-}
-
-function toolUseLine(name: 'Write' | 'Edit', filePath: string): string {
-  return JSON.stringify({
-    type: 'assistant',
-    message: {
-      role: 'assistant',
-      content: [
-        {
-          type: 'tool_use',
-          id: 'toolu_x',
-          name,
-          input: { file_path: filePath, content: 'stale transcript fragment' },
-        },
-      ],
-    },
-  })
-}
+import { resolvePlan } from '../src/cli/resolve-plan'
+import {
+  fixture,
+  makeIO,
+  makePayload,
+  toolUseLine,
+  FIXTURE_PLAN_PATH,
+  HOME,
+  TRANSCRIPT_PATH,
+} from './helpers/resolve-plan-io'
 
 // oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('resolvePlan', () => {
