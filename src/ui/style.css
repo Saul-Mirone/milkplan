@@ -1,6 +1,6 @@
 @import '@milkdown/crepe/theme/common/style.css';
-@import '@milkdown/crepe/theme/frame.css';
-@import '@milkdown/crepe/theme/frame-dark.css' (prefers-color-scheme: dark);
+@import '@milkdown/crepe/theme/nord.css';
+@import '@milkdown/crepe/theme/nord-dark.css' (prefers-color-scheme: dark);
 
 :root {
   color-scheme: light dark;
@@ -109,7 +109,7 @@ body {
   padding: 24px 32px 120px;
 }
 
-/* The frame theme hardcodes .ProseMirror { padding: 60px 120px }, which
+/* The common reset hardcodes .ProseMirror { padding: 60px 120px }, which
    starves the text column on narrow viewports; scale it with the viewport. */
 .mp-editor-column .milkdown .ProseMirror {
   padding: 40px clamp(20px, 8vw, 96px) 80px;

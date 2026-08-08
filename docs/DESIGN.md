@@ -380,8 +380,8 @@ for activeId), 'data-annotation-id': id})`.
   sent — you can close this tab" screen (state swap in App).
 - `CommentPopover.tsx`: absolutely positioned near the selection
   (`view.coordsAtPos(from)`), textarea + Save/Cancel; Save dispatches `add`.
-- Styling: `@milkdown/crepe/theme/common/style.css` + `frame.css`, plus
-  `frame-dark.css` behind `prefers-color-scheme: dark`. Two-column layout: editor
+- Styling: `@milkdown/crepe/theme/common/style.css` + `nord.css`, plus
+  `nord-dark.css` behind `prefers-color-scheme: dark`. Two-column layout: editor
   (flex-1, max-width ~860px) + sidebar (320px). `.mp-annotation {background:
 rgba(255, 212, 0, .35)}`, `--active` variant stronger.
 
