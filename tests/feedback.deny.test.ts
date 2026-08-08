@@ -41,6 +41,40 @@ function denyMessage(output: DeepReadonly<HookOutput> | null): string {
   return d.message
 }
 
+describe('annotationEntry layout', () => {
+  it('renders a multi-line comment and a multi-line excerpt as Claude will actually read them', () => {
+    // annotationEntry indents only the first line of the comment, and the
+    // excerpt is interpolated inside quotes without escaping newlines. Both
+    // are load-bearing for how the deny message parses on the other side, and
+    // neither is visible from an assertion that only checks `toContain`.
+    const output = buildDecisionOutput(
+      decision({
+        action: 'request-changes',
+        annotations: [
+          note(
+            'const x = 1\nconst y = 2',
+            'Two problems here:\n- the first\n- the second',
+          ),
+        ],
+      }),
+      filePlan,
+    )
+    expect(denyMessage(output)).toMatchInlineSnapshot(`
+      "The user reviewed the plan and requests changes before approving it.
+
+      Inline comments (each refers to a quoted excerpt from the plan):
+
+      1. Regarding: "const x = 1
+      const y = 2"
+         Comment: Two problems here:
+      - the first
+      - the second
+
+      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode."
+    `)
+  })
+})
+
 // oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('buildDecisionOutput — request changes', () => {
   it('deny with annotations and overall feedback', () => {

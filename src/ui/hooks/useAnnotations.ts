@@ -1,3 +1,4 @@
+import type { Node } from '@milkdown/kit/prose/model'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 
@@ -37,6 +38,63 @@ export function createAnnotationStore(): AnnotationStore {
 
 export type ViewGetter = () => EditorView | null
 
+/**
+ * The slice of an EditorView these two helpers read. Narrowing to it is what
+ * lets them be exercised against a bare ProseMirror document, with no DOM and
+ * no editor instance — EditorView satisfies it structurally.
+ */
+export interface DocSource {
+  state: { doc: Node }
+}
+
+/**
+ * Builds the `begin` action for a selection, or null when the range cannot
+ * carry an annotation.
+ *
+ * The guards are what stop an empty selection or a stale range (a toolbar
+ * click racing an edit that shortened the document) from creating a record
+ * that is orphaned the moment it exists. `id` is injected rather than
+ * generated here so the action is a pure function of its inputs.
+ */
+export function beginActionFor(
+  // ProseMirror's Node is a mutable class; only reads happen here.
+  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
+  view: DocSource | null,
+  from: number,
+  to: number,
+  id: string,
+): AnnotationAction | null {
+  if (!view || from >= to || to > view.state.doc.content.size) return null
+  return {
+    type: 'begin',
+    id,
+    from,
+    to,
+    createdExcerpt: view.state.doc.textBetween(from, to),
+  }
+}
+
+/**
+ * The text a record should quote: live document text while the anchor still
+ * exists, the text captured at creation once it has been deleted.
+ *
+ * The try/catch only matters if a stale record is read across an editor
+ * rebuild — plugin-remapped positions are valid by construction.
+ */
+export function excerptOf(
+  // ProseMirror's Node is a mutable class; only reads happen here.
+  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
+  view: DocSource | null,
+  record: DeepReadonly<AnnotationRecord>,
+): string {
+  if (record.orphaned || !view) return record.createdExcerpt
+  try {
+    return view.state.doc.textBetween(record.from, record.to)
+  } catch {
+    return record.createdExcerpt
+  }
+}
+
 export interface UseAnnotationsResult {
   /** Committed annotations only — what the sidebar shows and decisions send. */
   annotations: AnnotationRecord[]
@@ -72,17 +130,10 @@ function useAnnotationActions(
 ) {
   const beginAnnotation = useCallback(
     (from: number, to: number) => {
-      const view = getView()
-      if (!view || from >= to || to > view.state.doc.content.size) return null
-      const id = crypto.randomUUID()
-      dispatch({
-        type: 'begin',
-        id,
-        from,
-        to,
-        createdExcerpt: view.state.doc.textBetween(from, to),
-      })
-      return id
+      const action = beginActionFor(getView(), from, to, crypto.randomUUID())
+      if (action === null) return null
+      dispatch(action)
+      return action.id
     },
     [dispatch, getView],
   )
@@ -116,18 +167,7 @@ function useExcerptFor(
   getView: ViewGetter,
 ): (record: DeepReadonly<AnnotationRecord>) => string {
   return useCallback(
-    (record: DeepReadonly<AnnotationRecord>) => {
-      if (record.orphaned) return record.createdExcerpt
-      const view = getView()
-      if (!view) return record.createdExcerpt
-      try {
-        return view.state.doc.textBetween(record.from, record.to)
-      } catch {
-        // Plugin-remapped positions are valid by construction; this guard
-        // only matters if a stale record is read across an editor rebuild.
-        return record.createdExcerpt
-      }
-    },
+    (record: DeepReadonly<AnnotationRecord>) => excerptOf(getView(), record),
     [getView],
   )
 }

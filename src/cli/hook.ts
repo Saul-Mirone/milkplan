@@ -1,62 +1,19 @@
 import { randomBytes } from 'node:crypto'
-import {
-  appendFileSync,
-  existsSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
-import { homedir, release } from 'node:os'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
+import { buildDecisionOutput, editedMarkdownOf } from './feedback'
+import { realHookIO, type HookIO } from './hook-io'
+import type { ReviewSession, RunningServer } from './server'
 import type {
   HookPayload,
   ResolvedPlan,
   ReviewPayload,
 } from '../shared/protocol'
-import { buildDecisionOutput } from './feedback'
-import {
-  detectBrowserSupport,
-  openBrowser,
-  realLaunchIO,
-  type BrowserSupport,
-} from './open-browser'
-import { resolvePlan, type ResolveIO } from './resolve-plan'
-import {
-  startReviewServer,
-  type ReviewSession,
-  type RunningServer,
-} from './server'
+import type { DeepReadonly } from '../shared/readonly'
 
-const realIO: ResolveIO = {
-  readFile(path) {
-    try {
-      return readFileSync(path, 'utf8')
-    } catch {
-      return null
-    }
-  },
-  homedir,
-}
+/** A plan that actually exists — the only kind a review can be built around. */
+export type FoundPlan = Exclude<ResolvedPlan, { source: 'none' }>
 
-const DEBUG_LOG = join(homedir(), '.claude', 'milkplan.log')
-
-function log(message: string): void {
-  const line = `[milkplan] ${message}\n`
-  process.stderr.write(line)
-  // Hooks run with stderr invisible to the user in interactive sessions; keep a
-  // small on-disk trail so "nothing popped up" is diagnosable after the fact.
-  try {
-    if (existsSync(DEBUG_LOG) && statSync(DEBUG_LOG).size > 256 * 1024)
-      writeFileSync(DEBUG_LOG, '')
-    appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${line}`)
-  } catch {
-    // Logging must never break the hook.
-  }
-}
-
-function isHookPayload(value: unknown): value is HookPayload {
+export function isHookPayload(value: unknown): value is HookPayload {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -69,7 +26,7 @@ function isHookPayload(value: unknown): value is HookPayload {
   )
 }
 
-function parsePayload(stdinJson: string): HookPayload | null {
+export function parsePayload(stdinJson: string): HookPayload | null {
   let value: unknown
   try {
     value = JSON.parse(stdinJson)
@@ -80,21 +37,72 @@ function parsePayload(stdinJson: string): HookPayload | null {
 }
 
 /**
- * Builds the review session. onDecision/onSkip run after the HTTP response is
- * flushed and may terminate the process; `getRunning` defers reading the server
- * handle until then (it is assigned only once the server is listening).
+ * Persists the user's edits back to the plan file, if there are any.
+ *
+ * Goes through editedMarkdownOf rather than reading decision.editedMarkdown
+ * directly: a blank edit must never truncate the plan file. The UI guards this
+ * too, but the server accepts a decision from anything holding the token and
+ * this write is irreversible.
  */
-function buildSession(
-  // plan and payload are forwarded to buildDecisionOutput and writeFileSync
-  // (feedback.ts), whose contracts take the mutable domain types; a readonly
-  // parameter here would not be assignable to them.
+function writeEditedPlan(
+  planPath: string | null,
+  edited: string | undefined,
+  io: DeepReadonly<HookIO>,
+): void {
+  if (edited === undefined || planPath === null) return
+  try {
+    io.writePlanFile(planPath, edited)
+  } catch {
+    io.log(
+      `could not write edited plan to ${planPath}; delivering edits via context only`,
+    )
+  }
+}
+
+/**
+ * Returns a guard that admits the first caller and turns every later one away.
+ *
+ * handleApiRequest is stateless and server.close() only stops NEW connections —
+ * an established keep-alive socket keeps being served — so a duplicated tab
+ * (both carry the same #token= fragment) can land a second decision in the
+ * window between the first stdout write and the exit inside its flush
+ * callback. That would write the plan file twice and put two JSON lines on
+ * stdout, which is an unparseable hook response: Claude Code discards the
+ * whole review. Ignoring the straggler is the fail-safe answer, and the
+ * process is on its way out either way.
+ */
+function oneAnswer(onSettle: () => void): () => boolean {
+  let answered = false
+  return () => {
+    if (answered) return false
+    answered = true
+    onSettle()
+    return true
+  }
+}
+
+export interface SessionDeps {
+  plan: FoundPlan
+  payload: HookPayload
+  /** Deferred: the handle exists only once the server is listening. */
+  getRunning: () => RunningServer | null
+  onSettle: () => void
+  io: DeepReadonly<HookIO>
+}
+
+/**
+ * Builds the review session. onDecision/onSkip run after the HTTP response is
+ * flushed and may terminate the process.
+ */
+export function buildSession(
+  // plan and payload are forwarded to buildDecisionOutput (feedback.ts), whose
+  // contract takes the mutable domain types; a readonly parameter here would
+  // not be assignable to them.
   // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
-  plan: Exclude<ResolvedPlan, { source: 'none' }>,
-  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
-  payload: HookPayload,
-  getRunning: () => RunningServer | null,
-  onSettle: () => void,
+  deps: SessionDeps,
 ): ReviewSession {
+  const { plan, payload, getRunning, onSettle, io } = deps
+  const claim = oneAnswer(onSettle)
   return {
     payload: {
       plan: plan.markdown,
@@ -106,54 +114,28 @@ function buildSession(
     } satisfies ReviewPayload,
     token: randomBytes(16).toString('hex'),
     onDecision(decision) {
-      onSettle()
-      if (decision.editedMarkdown !== undefined && plan.source === 'file') {
-        try {
-          writeFileSync(plan.path, decision.editedMarkdown)
-        } catch {
-          log(
-            `could not write edited plan to ${plan.path}; delivering edits via context only`,
-          )
-        }
-      }
+      if (!claim()) return
+      writeEditedPlan(
+        plan.source === 'file' ? plan.path : null,
+        editedMarkdownOf(decision),
+        io,
+      )
       const output = buildDecisionOutput(
         decision,
         plan,
         payload.tool_input ?? {},
       )
       getRunning()?.close()
-      if (output === null) process.exit(0)
-      process.stdout.write(`${JSON.stringify(output)}\n`, () => process.exit(0))
+      // Exit only from inside the flush callback: a >64 KiB additionalContext
+      // does not fit one pipe write, and exiting early truncates the JSON.
+      io.writeStdout(`${JSON.stringify(output)}\n`, () => io.exit(0))
     },
     onSkip() {
-      onSettle()
+      if (!claim()) return
       getRunning()?.close()
-      process.exit(0)
+      io.exit(0)
     },
   }
-}
-
-/**
- * Resolves how a browser can be opened here, passing through when none can be.
- * Called before the server binds: with no reachable UI there is no point
- * holding a port, and exiting here is what keeps a headless box from parking
- * Claude Code on a listening socket until the hook timeout.
- */
-function resolveBrowserSupport(): BrowserSupport {
-  const support = detectBrowserSupport({
-    platform: process.platform,
-    release: release(),
-    env: process.env,
-  })
-  if (support.kind === 'unavailable') {
-    // The port does not exist yet, so this log line is the user's only pointer
-    // back to a review: name the escape hatch rather than just the verdict.
-    log(
-      `no way to open a browser (${support.reason}); passing through — set MILKPLAN_NO_BROWSER=1 to serve the review anyway and open it yourself`,
-    )
-    process.exit(0)
-  }
-  return support
 }
 
 /**
@@ -162,34 +144,75 @@ function resolveBrowserSupport(): BrowserSupport {
  * one. `isSettled` guards the (vanishingly small) window where a decision is
  * already in flight.
  */
-function passThroughOnLaunchFailure(
-  running: { readonly close: () => void },
+export function passThroughOnLaunchFailure(
+  running: DeepReadonly<{ close: () => void }>,
   isSettled: () => boolean,
+  io: DeepReadonly<HookIO>,
 ): () => void {
   return () => {
     if (isSettled()) return
-    log('every browser launcher failed to start; passing through')
+    io.log('every browser launcher failed to start; passing through')
     try {
       running.close()
     } catch {
       // Runs inside a spawn error handler, where a throw would be an uncaught
       // exception rather than a passthrough. Exiting matters more than closing.
     }
-    process.exit(0)
+    io.exit(0)
   }
 }
 
 /** Parses the hook payload, passing through when it is not one. */
-function parsePayloadOrPassThrough(stdinJson: string): HookPayload {
+function parsePayloadOrPassThrough(
+  stdinJson: string,
+  io: DeepReadonly<HookIO>,
+): HookPayload {
   const payload = parsePayload(stdinJson)
   if (payload === null) {
-    log('malformed hook payload; passing through')
-    process.exit(0)
+    io.log('malformed hook payload; passing through')
+    io.exit(0)
   }
-  log(
+  io.log(
     `invoked: event=${payload.hook_event_name ?? '?'} session=${payload.session_id}`,
   )
   return payload
+}
+
+/** Locates the plan, passing through when there is nothing to review. */
+function resolvePlanOrPassThrough(
+  payload: DeepReadonly<HookPayload>,
+  io: DeepReadonly<HookIO>,
+): FoundPlan {
+  const plan = io.resolve(payload)
+  if (plan.source === 'none') {
+    io.log('no plan found in transcript or tool input; passing through')
+    io.exit(0)
+  }
+  io.log(
+    plan.source === 'file'
+      ? `plan resolved from ${plan.path}`
+      : 'plan from tool_input',
+  )
+  return plan
+}
+
+/**
+ * Resolves how a browser can be opened here, passing through when none can be.
+ * Called before the server binds: with no reachable UI there is no point
+ * holding a port, and exiting here is what keeps a headless box from parking
+ * Claude Code on a listening socket until the hook timeout.
+ */
+function browserSupportOrPassThrough(io: DeepReadonly<HookIO>) {
+  const support = io.browserSupport()
+  if (support.kind === 'unavailable') {
+    // The port does not exist yet, so this log line is the user's only pointer
+    // back to a review: name the escape hatch rather than just the verdict.
+    io.log(
+      `no way to open a browser (${support.reason}); passing through — set MILKPLAN_NO_BROWSER=1 to serve the review anyway and open it yourself`,
+    )
+    io.exit(0)
+  }
+  return support
 }
 
 /**
@@ -197,51 +220,40 @@ function parsePayloadOrPassThrough(stdinJson: string): HookPayload {
  * nothing to stdout and exit 0" so Claude Code falls back to its own prompt.
  * Only the final decision JSON ever touches stdout.
  */
-export async function runHook(stdinJson: string): Promise<void> {
-  process.on('SIGINT', () => process.exit(0))
-  process.on('SIGTERM', () => process.exit(0))
+export async function runHook(
+  stdinJson: string,
+  io: DeepReadonly<HookIO> = realHookIO,
+): Promise<void> {
+  io.onSignal(() => io.exit(0))
 
-  const payload = parsePayloadOrPassThrough(stdinJson)
-
-  const plan = resolvePlan(payload, realIO)
-  if (plan.source === 'none') {
-    log('no plan found in transcript or tool input; passing through')
-    process.exit(0)
-  }
-  log(
-    plan.source === 'file'
-      ? `plan resolved from ${plan.path}`
-      : 'plan from tool_input',
-  )
-
-  const support = resolveBrowserSupport()
+  const payload = parsePayloadOrPassThrough(stdinJson, io)
+  const plan = resolvePlanOrPassThrough(payload, io)
+  const support = browserSupportOrPassThrough(io)
 
   let running: RunningServer | null = null
   let settled = false
-  const session = buildSession(
+  const session = buildSession({
     plan,
     payload,
-    () => running,
-    () => {
+    getRunning: () => running,
+    onSettle: () => {
       settled = true
     },
-  )
+    io,
+  })
 
-  // dist/cli.mjs sits next to dist/ui after build.
-  const uiDir = fileURLToPath(new URL('./ui', import.meta.url))
   try {
-    running = await startReviewServer(session, uiDir)
+    running = await io.startServer(session)
   } catch {
-    log('review server failed to start; passing through')
-    process.exit(0)
+    io.log('review server failed to start; passing through')
+    io.exit(0)
   }
 
-  log(`review UI at ${running.url} (open manually if no browser appeared)`)
-  openBrowser(
+  io.log(`review UI at ${running.url} (open manually if no browser appeared)`)
+  io.launch(
     running.url,
     support,
-    realLaunchIO,
-    passThroughOnLaunchFailure(running, () => settled),
+    passThroughOnLaunchFailure(running, () => settled, io),
   )
   // No further code: the listening server keeps the process alive until a
   // decision, a skip, a signal, or the Claude Code hook timeout.

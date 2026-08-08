@@ -1,69 +1,14 @@
 import { useCallback, useState, type RefObject } from 'react'
 
-import type {
-  AnnotationOut,
-  ApprovalPermissionMode,
-  DecisionRequest,
-} from '../../shared/protocol'
+import type { ApprovalPermissionMode } from '../../shared/protocol'
 import { postDecision, postSkip } from '../api'
 import type { AnnotationRecord } from '../annotations/plugin'
+import { buildDecision, isModeValue, MODE_OPTIONS } from '../decision'
 import type { PlanEditorHandle } from './PlanEditor'
 import type { DeepReadonly } from '../../shared/readonly'
 
-/** '' = keep the session's current mode (no updatedPermissions sent). */
-const MODE_OPTIONS: readonly Readonly<{
-  value: ApprovalPermissionMode | ''
-  label: string
-}>[] = [
-  { value: '', label: 'Keep current mode' },
-  { value: 'auto', label: 'Auto mode' },
-  { value: 'acceptEdits', label: 'Accept edits' },
-  { value: 'default', label: 'Manually approve' },
-]
-
 /** Minimal readonly shape of the select's change event (only value is read). */
 type SelectChangeEvent = DeepReadonly<{ target: { value: string } }>
-
-/** Narrow a raw <select> value to the mode union without an unsafe assertion. */
-function isModeValue(value: string): value is ApprovalPermissionMode | '' {
-  return (
-    value === '' ||
-    value === 'auto' ||
-    value === 'acceptEdits' ||
-    value === 'default'
-  )
-}
-
-type DecisionContext = Readonly<{
-  annotations: readonly DeepReadonly<AnnotationRecord>[]
-  excerptFor: (record: DeepReadonly<AnnotationRecord>) => string
-  overallFeedback: string
-  editorRef: DeepReadonly<RefObject<PlanEditorHandle | null>>
-  mode: ApprovalPermissionMode | ''
-}>
-
-function buildDecision(
-  action: DecisionRequest['action'],
-  ctx: DecisionContext,
-): DecisionRequest {
-  const serialized: AnnotationOut[] = ctx.annotations.map((record) => ({
-    excerpt: ctx.excerptFor(record),
-    comment: record.comment,
-    orphaned: record.orphaned,
-  }))
-  const decision: DecisionRequest = {
-    action,
-    annotations: serialized,
-    overallFeedback: ctx.overallFeedback.trim(),
-  }
-  const editor = ctx.editorRef.current
-  // editedMarkdown only when the content diverged from the parse baseline.
-  if (editor?.isEdited() === true)
-    decision.editedMarkdown = editor.getMarkdown()
-  if (action === 'approve' && ctx.mode !== '')
-    decision.permissionMode = ctx.mode
-  return decision
-}
 
 type ActionBarProps = Readonly<{
   editorRef: DeepReadonly<RefObject<PlanEditorHandle | null>>
@@ -73,11 +18,13 @@ type ActionBarProps = Readonly<{
   onDone: (variant: 'sent' | 'skipped') => void
 }>
 
-export function ActionBar(props: ActionBarProps) {
-  const { editorRef, annotations, excerptFor, overallFeedback, onDone } = props
+/**
+ * Runs one request, holding the bar disabled until it settles and surfacing a
+ * failure inline — a decision that never reached the CLI must not look sent.
+ */
+function useSend(onDone: (variant: 'sent' | 'skipped') => void) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<ApprovalPermissionMode | ''>('')
   const send = useCallback(
     (run: () => Promise<void>, variant: 'sent' | 'skipped') => {
       setPending(true)
@@ -93,17 +40,34 @@ export function ActionBar(props: ActionBarProps) {
     },
     [onDone],
   )
+  return { pending, error, send }
+}
+
+export function ActionBar(props: ActionBarProps) {
+  const { editorRef, annotations, excerptFor, overallFeedback, onDone } = props
+  const [mode, setMode] = useState<ApprovalPermissionMode | ''>('')
+  const { pending, error, send } = useSend(onDone)
   const onSkip = useCallback(() => {
     send(postSkip, 'skipped')
   }, [send])
+  const ctxFor = useCallback(
+    () => ({
+      annotations,
+      excerptFor,
+      overallFeedback,
+      editor: editorRef.current,
+      mode,
+    }),
+    [annotations, excerptFor, overallFeedback, editorRef, mode],
+  )
   const onRequestChanges = useCallback(() => {
-    const ctx = { annotations, excerptFor, overallFeedback, editorRef, mode }
+    const ctx = ctxFor()
     send(() => postDecision(buildDecision('request-changes', ctx)), 'sent')
-  }, [send, annotations, excerptFor, overallFeedback, editorRef, mode])
+  }, [send, ctxFor])
   const onApprove = useCallback(() => {
-    const ctx = { annotations, excerptFor, overallFeedback, editorRef, mode }
+    const ctx = ctxFor()
     send(() => postDecision(buildDecision('approve', ctx)), 'sent')
-  }, [send, annotations, excerptFor, overallFeedback, editorRef, mode])
+  }, [send, ctxFor])
   const onModeChange = useCallback((event: SelectChangeEvent) => {
     if (isModeValue(event.target.value)) setMode(event.target.value)
   }, [])

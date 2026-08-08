@@ -117,7 +117,18 @@ async function runTestFire(args: readonly string[]): Promise<void> {
       process.exitCode = 1
       return
     }
-    await runHook(readFileSync(resolve(payloadPath), 'utf8'))
+    let payloadJson: string
+    try {
+      payloadJson = readFileSync(resolve(payloadPath), 'utf8')
+    } catch {
+      // Unguarded this surfaced as an unhandled rejection with a stack trace,
+      // because main() is invoked as `void main()`. Every other error path
+      // here reports one line and sets exitCode.
+      process.stderr.write(`[milkplan] could not read ${payloadPath}\n`)
+      process.exitCode = 1
+      return
+    }
+    await runHook(payloadJson)
     return
   }
 
