@@ -1,7 +1,12 @@
+import type { RecordRoundInput } from '../../src/cli/history'
 import type { HookIO } from '../../src/cli/hook-io'
 import type { BrowserSupport } from '../../src/cli/open-browser'
-import type { RunningServer } from '../../src/cli/server'
-import type { HookPayload, ResolvedPlan } from '../../src/shared/protocol'
+import type { ReviewSession, RunningServer } from '../../src/cli/server'
+import type {
+  HookPayload,
+  PlanVersion,
+  ResolvedPlan,
+} from '../../src/shared/protocol'
 import type { DeepReadonly } from '../../src/shared/readonly'
 
 /**
@@ -32,6 +37,9 @@ export interface FakeHookState {
   stdout: string[]
   exits: number[]
   planWrites: Written[]
+  historyRecords: RecordRoundInput[]
+  /** Every session handed to startServer, for payload assertions. */
+  sessions: DeepReadonly<ReviewSession>[]
   serverStarts: number
   launches: string[]
   closes: number
@@ -44,6 +52,8 @@ export interface FakeHookState {
 export interface FakeHookIOOptions {
   plan?: ResolvedPlan
   support?: BrowserSupport
+  /** recordHistory's return; defaults to just the current round. */
+  history?: PlanVersion[]
   /** Reject from startServer, as an occupied port would. */
   serverFails?: boolean
   /** Throw from writePlanFile, as EACCES would. */
@@ -70,6 +80,9 @@ const DEFAULT_PLAN: ResolvedPlan = {
 
 export const FAKE_URL = 'http://127.0.0.1:54321/#token=deadbeef'
 
+/** The ts the fake stamps on its default recordHistory result. */
+export const FAKE_HISTORY_TS = 1_700_000_000_000
+
 export function fakeHookIO(
   options: DeepReadonly<FakeHookIOOptions> = {},
 ): FakeHook {
@@ -78,6 +91,8 @@ export function fakeHookIO(
     stdout: [],
     exits: [],
     planWrites: [],
+    historyRecords: [],
+    sessions: [],
     serverStarts: 0,
     launches: [],
     closes: 0,
@@ -107,6 +122,44 @@ export function fakeHookIO(
   }
 }
 
+/**
+ * recordHistory's return value: the configured rounds, or just the current
+ * one. Like the real recordRound, the current round is always last.
+ */
+function historyResult(
+  input: DeepReadonly<RecordRoundInput>,
+  options: DeepReadonly<FakeHookIOOptions>,
+): PlanVersion[] {
+  return options.history === undefined
+    ? [
+        {
+          ts: FAKE_HISTORY_TS,
+          round: 1,
+          planPath: input.planPath,
+          markdown: input.markdown,
+        },
+      ]
+    : [...options.history]
+}
+
+/** startServer as its own factory keeps buildIO under the function-size cap. */
+function startServerFor(
+  // The fake's own mutable recording state.
+  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
+  state: FakeHookState,
+  running: DeepReadonly<RunningServer>,
+  options: DeepReadonly<FakeHookIOOptions>,
+): HookIO['startServer'] {
+  return (session) => {
+    state.sessions.push(session)
+    state.serverStarts += 1
+    state.events.push('start-server')
+    if (options.serverFails === true)
+      return Promise.reject(new Error('EADDRINUSE'))
+    return Promise.resolve(running)
+  }
+}
+
 function buildIO(
   // The fake's own mutable recording state.
   // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
@@ -116,17 +169,17 @@ function buildIO(
 ): HookIO {
   return {
     resolve: () => options.plan ?? DEFAULT_PLAN,
+    recordHistory(input) {
+      state.historyRecords.push({ ...input })
+      state.events.push('record-history')
+      return historyResult(input, options)
+    },
     browserSupport: () =>
       options.support ?? { kind: 'available', launchers: ['macos-open'] },
     launch(url) {
       state.launches.push(url)
     },
-    startServer() {
-      state.serverStarts += 1
-      if (options.serverFails === true)
-        return Promise.reject(new Error('EADDRINUSE'))
-      return Promise.resolve(running)
-    },
+    startServer: startServerFor(state, running, options),
     writePlanFile(path, content) {
       if (options.planWriteFails === true) throw new Error('EACCES')
       state.planWrites.push({ path, content })

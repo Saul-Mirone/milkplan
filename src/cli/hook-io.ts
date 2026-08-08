@@ -1,7 +1,10 @@
 import {
   appendFileSync,
   existsSync,
+  mkdirSync,
+  readdirSync,
   readFileSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -9,6 +12,7 @@ import { homedir, release } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { recordRound, type HistoryIO, type RecordRoundInput } from './history'
 import {
   detectBrowserSupport,
   openBrowser,
@@ -21,7 +25,7 @@ import {
   type ReviewSession,
   type RunningServer,
 } from './server'
-import type { HookPayload, ResolvedPlan } from '../shared/protocol'
+import type { HookPayload, PlanVersion, ResolvedPlan } from '../shared/protocol'
 import type { DeepReadonly } from '../shared/readonly'
 
 /**
@@ -35,6 +39,12 @@ import type { DeepReadonly } from '../shared/readonly'
  */
 export interface HookIO {
   resolve(payload: DeepReadonly<HookPayload>): ResolvedPlan
+  /**
+   * Total and fail-open (recordRound's contract): never throws, and on any
+   * failure still returns at least the current round, so history can never
+   * block a review.
+   */
+  recordHistory(input: DeepReadonly<RecordRoundInput>): PlanVersion[]
   browserSupport(): BrowserSupport
   launch(
     url: string,
@@ -64,8 +74,64 @@ const realResolveIO: ResolveIO = {
 
 const DEBUG_LOG = join(homedir(), '.claude', 'milkplan.log')
 
+function debugLog(message: string): void {
+  const line = `[milkplan] ${message}\n`
+  process.stderr.write(line)
+  // Hooks run with stderr invisible to the user in interactive sessions;
+  // keep a small on-disk trail so "nothing popped up" is diagnosable after
+  // the fact.
+  try {
+    if (existsSync(DEBUG_LOG) && statSync(DEBUG_LOG).size > 256 * 1024)
+      writeFileSync(DEBUG_LOG, '')
+    appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${line}`)
+  } catch {
+    // Logging must never break the hook.
+  }
+}
+
+export const realHistoryIO: HistoryIO = {
+  readFile(path) {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return null
+    }
+  },
+  mkdir(path) {
+    mkdirSync(path, { recursive: true })
+  },
+  appendFile(path, content) {
+    appendFileSync(path, content)
+  },
+  listDir(path) {
+    try {
+      return readdirSync(path)
+    } catch {
+      return null
+    }
+  },
+  mtimeMs(path) {
+    try {
+      return statSync(path).mtimeMs
+    } catch {
+      return null
+    }
+  },
+  removeFile(path) {
+    try {
+      rmSync(path)
+    } catch {
+      // Pruning is best-effort; a file that will not go must not break the hook.
+    }
+  },
+  homedir,
+  now: () => Date.now(),
+  log: debugLog,
+}
+
 export const realHookIO: HookIO = {
   resolve: (payload) => resolvePlan(payload, realResolveIO),
+  recordHistory: (input) => recordRound(input, realHistoryIO),
   browserSupport: () =>
     detectBrowserSupport({
       platform: process.platform,
@@ -91,20 +157,7 @@ export const realHookIO: HookIO = {
   exit(code) {
     process.exit(code)
   },
-  log(message) {
-    const line = `[milkplan] ${message}\n`
-    process.stderr.write(line)
-    // Hooks run with stderr invisible to the user in interactive sessions;
-    // keep a small on-disk trail so "nothing popped up" is diagnosable after
-    // the fact.
-    try {
-      if (existsSync(DEBUG_LOG) && statSync(DEBUG_LOG).size > 256 * 1024)
-        writeFileSync(DEBUG_LOG, '')
-      appendFileSync(DEBUG_LOG, `${new Date().toISOString()} ${line}`)
-    } catch {
-      // Logging must never break the hook.
-    }
-  },
+  log: debugLog,
   onSignal(handler) {
     process.on('SIGINT', handler)
     process.on('SIGTERM', handler)

@@ -31,9 +31,27 @@ export interface ReviewMeta {
   sessionId: string
 }
 
+/** One submitted plan round of a session (recorded at hook time — never the
+ *  reviewer-edited version). */
+export interface PlanVersion {
+  /** Epoch ms, stamped by the CLI when first recorded; display only, never
+   *  used for ordering. */
+  ts: number
+  /** 1-based round number within the session, stamped when first recorded —
+   *  labels stay accurate even after the read-time round cap slices old
+   *  entries off the served history. */
+  round: number
+  /** Absolute path of that round's plan file; null for an inline plan. */
+  planPath: string | null
+  markdown: string
+}
+
 /** GET /api/review response. */
 export interface ReviewPayload {
   plan: string
+  /** This session's earlier rounds, oldest first; may be empty. The current
+   *  round is the `plan` field and never repeats here. */
+  history: readonly PlanVersion[]
   meta: ReviewMeta
 }
 

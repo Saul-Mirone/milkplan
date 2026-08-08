@@ -401,6 +401,118 @@ body {
   outline-offset: 1px;
 }
 
+/* ---- header actions (round badge + diff entry) -------------------------- */
+
+.mp-header__actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mp-header__round {
+  font-family: var(--mp-font-mono);
+  font-size: 11px;
+  color: var(--mp-muted);
+  background: var(--mp-surface);
+  border: 1px solid var(--mp-border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+/* ---- diff overlay ------------------------------------------------------- */
+
+/* A native <dialog> used as a plain modal container: undo the UA's sizing,
+   border, and canvas colors before laying out the panel. */
+.mp-diff-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+}
+
+.mp-diff-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.mp-diff-overlay__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(920px, calc(100% - 32px));
+  max-height: calc(100vh - 64px);
+  background: var(--mp-bg);
+  border: 1px solid var(--mp-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+}
+
+.mp-diff-overlay__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--mp-border);
+}
+
+.mp-diff-overlay__label {
+  font-size: 12px;
+  color: var(--mp-muted);
+  white-space: nowrap;
+}
+
+.mp-diff-overlay__select {
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--mp-border);
+  background: var(--mp-surface);
+  color: var(--mp-fg);
+}
+
+.mp-diff-overlay__close {
+  margin-left: auto;
+}
+
+.mp-diff-overlay__body {
+  overflow-y: auto;
+  padding: 0 24px 24px;
+}
+
+.mp-diff-overlay__notice {
+  padding: 32px 0;
+  text-align: center;
+  color: var(--mp-muted);
+}
+
+/* The common reset's .ProseMirror { padding: 60px 120px } starves the text
+   column inside the overlay panel; keep it modest here. */
+.mp-diff-overlay .milkdown .ProseMirror {
+  padding: 24px clamp(16px, 4vw, 48px) 48px;
+}
+
+/* Read-only is load-bearing: the diff component renders per-chunk
+   Accept/Reject controls unconditionally, with no config switch. */
+.mp-diff-overlay .milkdown .milkdown-diff-controls,
+.mp-diff-overlay .milkdown .milkdown-diff-controls-block {
+  display: none;
+}
+
 /* ---- terminal screens (loading / done / error) -------------------------- */
 
 .mp-screen {

@@ -17,6 +17,10 @@ opens the plan in your browser instead of the terminal prompt:
   manual); rejections send your comments (anchored to quoted excerpts) back to
   Claude, which revises and resubmits. Skip falls back to the normal terminal
   prompt.
+- **Compare rounds** — when Claude revises and resubmits after "Request
+  changes", the next review shows a round badge and a "View changes" button:
+  a read-only inline diff against any earlier submitted round of the same
+  session.
 
 ![The milkplan review UI: the plan in a WYSIWYG editor with an annotation anchored to selected text](docs/assets/review-ui.png)
 
@@ -101,6 +105,10 @@ npm uninstall -g milkplan
 (Uninstalling only the package is not enough: a leftover `npx -y milkplan` hook
 would silently re-download it from the registry on the next plan approval.)
 
+Uninstalling does not delete review data: the plan text of past rounds stays in
+`~/.claude/milkplan/history/` (see Plan history below) — remove that directory
+yourself if you don't want to keep it.
+
 ## How it works
 
 ```
@@ -120,6 +128,24 @@ milkplan is **fail-open**: if the plan can't be located, the server can't start,
 browser can be opened, or you skip, it exits silently and Claude Code shows its
 normal approval prompt. The hook `timeout` is the only thing that bounds how long a
 review can stay open.
+
+## Plan history
+
+When you request changes, Claude revises and resubmits — a new review round in
+the same session. milkplan records each round's plan as it was submitted, which
+is what powers the "View changes" diff:
+
+- **Where:** `~/.claude/milkplan/history/<session_id>.jsonl`, one round per
+  line. Nothing else is stored — no annotations, no decisions.
+- **What:** the submitted plan markdown only. Edits you make during review are
+  written back to the plan file, so they surface as part of the _next_ round's
+  submission — the diff shows everything that changed between two submissions,
+  not only Claude's revision.
+- **Retention:** the review UI is served the last 20 rounds of a session;
+  history files untouched for about 30 days are pruned automatically.
+- **Failures:** history is best-effort. If it can't be read or written,
+  milkplan logs it and the review proceeds normally (the current round's diff
+  falls back to in-memory history) — a history failure never blocks a review.
 
 ## Troubleshooting
 

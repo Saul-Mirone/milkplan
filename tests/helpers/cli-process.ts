@@ -174,6 +174,19 @@ export async function makeSandbox(planMarkdown: string): Promise<Sandbox> {
   }
 }
 
+/** GETs an /api path from a running review, using the token from its URL. */
+export async function getFrom(
+  url: string,
+  path: string,
+): Promise<{ status: number; body: string }> {
+  const parsed = new URL(url)
+  const token = /token=([^&]+)/u.exec(parsed.hash)?.[1] ?? ''
+  const response = await fetch(`${parsed.origin}${path}`, {
+    headers: { 'x-milkplan-token': token },
+  })
+  return { status: response.status, body: await response.text() }
+}
+
 /** POSTs a decision to a running review, using the token from its URL. */
 export async function postTo(
   url: string,

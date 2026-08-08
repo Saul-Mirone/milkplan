@@ -42,6 +42,9 @@ describe('runUninstall', () => {
     for (const path of [USER_SETTINGS, PROJECT_SHARED, PROJECT_LOCAL])
       expect(fake.settingsAt(path)).toEqual({})
     expect(logged(fake.state, 'npm uninstall -g milkplan')).toBe(true)
+    // Uninstall leaves the plan history behind; the user must at least be
+    // told where it lives.
+    expect(logged(fake.state, '~/.claude/milkplan/history/')).toBe(true)
   })
 
   it('removes a checkout hook whose path never mentions milkplan', () => {

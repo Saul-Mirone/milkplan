@@ -10,7 +10,10 @@ Differentiator vs existing tools (Plannotator): the plan is **directly editable*
 
 ## Architecture
 
-One process per review. No daemon. Fail-open everywhere.
+One process per review. No daemon. Fail-open everywhere. The only cross-process
+state is the plan-history store (`~/.claude/milkplan/history/`, one JSONL file
+per session — see `src/cli/history.ts`), and it is fail-open too: any history
+failure degrades that round to in-memory history and never blocks the review.
 
 ```
 Claude Code ──ExitPlanMode──▶ PermissionRequest hook ──stdin JSON──▶ milkplan CLI
@@ -51,8 +54,17 @@ input: {file_path: "<home>/.claude/plans/<name>.md", ...}}`.
 ### `src/shared/protocol.ts` (already written — single source of truth for types)
 
 See the file. Key types: `HookPayload`, `ResolvedPlan`, `ReviewPayload`,
-`AnnotationOut`, `DecisionRequest`, `HookAllowOutput`, `HookDenyOutput`,
-`TOKEN_HEADER`.
+`PlanVersion`, `AnnotationOut`, `DecisionRequest`, `HookAllowOutput`,
+`HookDenyOutput`, `TOKEN_HEADER`.
+
+`ReviewPayload.history: readonly PlanVersion[]` — the session's prior submitted
+rounds, oldest → newest; the current round is the `plan` field and never repeats
+in `history`. A `PlanVersion` is `{ts, round, planPath, markdown}`: the plan as
+submitted at hook time, never the reviewer-edited version. `round` is the
+1-based round number stamped when first recorded, so labels stay accurate after
+the read-time round cap slices old entries off. History is fixed at
+hook time and rides the existing `GET /api/review` response — no new endpoint,
+zero changes to `server.ts` and `src/ui/api.ts`.
 
 ### `src/cli/resolve-plan.ts`
 
@@ -79,6 +91,78 @@ Algorithm:
 5. Fallback 2: `{source: 'none'}`.
 
 Pure function; no direct fs/os imports so tests can inject `ResolveIO`.
+
+### `src/cli/history.ts` (pure logic + injected IO, mirrors `resolve-plan.ts`)
+
+```ts
+export interface HistoryIO {
+  readFile(path: string): string | null // any error → null
+  mkdir(path: string): void // recursive; may throw
+  appendFile(path: string, content: string): void // may throw
+  listDir(path: string): string[] | null // missing/unreadable dir → null
+  mtimeMs(path: string): number | null // stat failure → null
+  removeFile(path: string): void // best-effort, swallows every error
+  homedir(): string
+  now(): number
+  log(message: string): void // never throws
+}
+export interface RecordRoundInput {
+  sessionId: string
+  planPath: string | null // null for inline plans
+  markdown: string
+}
+export const STALE_AFTER_MS = 30 * 24 * 60 * 60 * 1000
+export const MAX_ROUNDS = 20
+
+export function historyDirFor(home: string): string // <home>/.claude/milkplan/history
+export function historyFileFor(home: string, sessionId: string): string // <dir>/<sessionId>.jsonl
+// JSONL parse; blank, malformed, or misshapen lines are silently skipped per line.
+export function parseHistory(raw: string): PlanVersion[]
+// Persist this round, return the session's versions (old → new, current round
+// last, at most MAX_ROUNDS). TOTAL: never throws.
+export function recordRound(
+  input: DeepReadonly<RecordRoundInput>,
+  io: DeepReadonly<HistoryIO>,
+): PlanVersion[]
+```
+
+One append-only JSONL file per session at
+`~/.claude/milkplan/history/<session_id>.jsonl`, one `PlanVersion` per line — a
+single `appendFile` per round; O_APPEND atomicity plus per-line parse tolerance
+absorbs torn concurrent writes. The file is never rewritten: the `MAX_ROUNDS`
+cap is a read-time slice, and disk growth is bounded by the prune. Never writes
+into `~/.claude/plans/` (the `resolve-plan.ts` trust boundary — a distinct
+directory plus the `.jsonl` suffix).
+
+`recordRound`:
+
+1. Session ids must match `/^[A-Za-z0-9_-]{1,128}$/u` (path-traversal guard;
+   real ids are UUIDs, so this branch stays minimal): otherwise log once, do
+   zero disk IO, return only the current round.
+2. `parseHistory(readFile(file) ?? '')` — ENOENT is an empty history.
+3. Consecutive-duplicate dedupe: if the last stored round equals the input
+   under `normalizeMarkdown` (`src/shared/markdown.ts`: strip `\r` +
+   `trimEnd()`, never per-line trim — shared with the UI's diff precheck),
+   return the prior rounds unchanged (original `ts` kept). Only consecutive:
+   A→B→A records three rounds.
+4. Otherwise append `{ts: now(), planPath, markdown}`; a mkdir/append failure
+   is logged and the result is `[...prior, current]` regardless — a read-only
+   HOME still gets this round's diff from memory.
+5. Prune (own try/catch): sibling `.jsonl` files older than `STALE_AFTER_MS`
+   by `mtimeMs` are removed — never the current session's own file (a failed
+   append would make it look stale). Runs on every call; a readdir is cheap
+   and a throttle marker would itself be corruptible state.
+
+`src/cli/hook-io.ts` exports `realHistoryIO: HistoryIO` and `HookIO` gains
+`recordHistory(input: DeepReadonly<RecordRoundInput>): PlanVersion[]` —
+`recordRound` over `realHistoryIO`, same total/fail-open contract as `resolve`.
+
+⚠️ **Diff semantics caveat:** only hook-time submissions are stored — the
+reviewer-edited version of a round never is. But `onDecision` writes
+`editedMarkdown` back to the plan file on both approve and request-changes, so
+the next round's submission baseline includes those edits: the diff shows
+everything between round N's submission and round N+1's submission — including
+the reviewer's write-backs at round N's decision — not only Claude's revision.
 
 ### `src/cli/feedback.ts` (pure functions, exact templates)
 
@@ -213,10 +297,16 @@ export async function runHook(stdinJson: string): Promise<void>
    - `onSkip`: close server, exit 0 with no output.
 4. `detectBrowserSupport` BEFORE binding: `unavailable` → passthrough (a review
    nobody can reach would otherwise hold the port until the hook timeout).
-5. `startReviewServer` (failure → passthrough), then `openBrowser(url, support,
+5. `io.recordHistory({sessionId, planPath (null unless source is 'file'),
+markdown})` — after the browser-support check, i.e. after every passthrough
+   exit (rounds nobody reviews are never recorded) and before the port binds.
+   Total/fail-open like `io.resolve`: no try/catch at the call site. The
+   returned versions minus their last element (always the current round) become
+   `ReviewPayload.history`.
+6. `startReviewServer` (failure → passthrough), then `openBrowser(url, support,
 realLaunchIO, onExhausted)`. Every launcher missing → passthrough; a launcher
    that started but opened nothing → print URL to stderr and keep waiting.
-6. SIGINT/SIGTERM → exit 0 silently. Wait indefinitely (hook timeout is the backstop).
+7. SIGINT/SIGTERM → exit 0 silently. Wait indefinitely (hook timeout is the backstop).
 
 Passthrough = print nothing, `process.exit(0)`.
 
@@ -321,8 +411,10 @@ Shebang `#!/usr/bin/env node`. Arg router:
 ### UI (`src/ui`, React 19 + Vite)
 
 - `main.tsx` → `App.tsx`: fetch `/api/review` (token from `location.hash`
-  `#token=...`, default `dev-token` when absent), render header (plan path, cwd),
-  `PlanEditor`, `Sidebar`, `ActionBar`.
+  `#token=...`, default `dev-token` when absent), render `ReviewHeader` (plan
+  path, cwd, round badge), `PlanEditor`, `Sidebar`, `ActionBar`, and — while
+  `diffOpen` — `DiffOverlay` fed with `payload.history` and `payload.plan` (the
+  submitted current round, never the live edited document).
 - `PlanEditor.tsx`: `useEffect`+ref wrapping a `Crepe` instance.
   - `new Crepe({root, defaultValue: plan, features: {[Crepe.Feature.ImageBlock]:
 false, [Crepe.Feature.Latex]: false}, featureConfigs: {[Crepe.Feature.Toolbar]:
@@ -380,6 +472,36 @@ for activeId), 'data-annotation-id': id})`.
   sent — you can close this tab" screen (state swap in App).
 - `CommentPopover.tsx`: absolutely positioned near the selection
   (`view.coordsAtPos(from)`), textarea + Save/Cancel; Save dispatches `add`.
+- `components/ReviewHeader.tsx`: the header (plan path or "inline plan (no
+  file)", cwd) plus `roundNumber: number | null` and `onViewChanges: (() =>
+void) | null` — both non-null render a right-aligned `Round {n}` badge and a
+  "View changes" button; first round / no history hides the entry entirely.
+- `history.ts`: `versionLabel(version)` → `"Round 2 · 14:32"`, numbered from
+  the version's recorded `round` (pure; tests assert structure, not
+  timezone-specific output).
+- `diff/feature.ts`: `diffFeature(editor)` — Crepe feature adapter registering
+  `@milkdown/kit/plugin/diff` + `@milkdown/kit/component/diff` before
+  `create()`; sets `customBlockTypes: ['table', 'image-block', 'code_block']`
+  so decorations reach Crepe's custom node views. `diffConfig` keeps its
+  shipped default, which already ignores Crepe's volatile heading ids.
+- `components/DiffOverlay.tsx`: read-only diff modal (`role="dialog"`,
+  `aria-modal`; Escape via a document-level listener scoped to the overlay's
+  lifetime by its effect cleanup — a dialog-scoped handler goes deaf once a
+  click on the read-only text drops focus to the body; backdrop click and a
+  Close button, focused on mount, also dismiss).
+  A version `<select>` (labels via `versionLabel`) defaults to the previous
+  round and resets on every open; switching versions remounts the pane via a
+  React key. The pane is a SECOND read-only Crepe instance — the main editor is
+  never touched, so in-flight edits and annotations survive open/close.
+  Bootstrap: `defaultValue` = the selected old round, then
+  `startDiffReviewCmd(currentMarkdown)`. A `normalizeMarkdown` equality
+  precheck short-circuits to "no changes" (starting the diff on an identical
+  document yields zero changes yet still locks the editor); after start,
+  `getPendingChanges(state).length === 0` also means "no changes";
+  `startDiffReviewCmd` returning `false` (markdown parse failure) → error
+  notice. The per-block Accept/Reject controls have no config switch and are
+  hidden by CSS (`.mp-diff-overlay` rules; a dist canary asserts the rule
+  ships).
 - Styling: `@milkdown/crepe/theme/common/style.css` + `nord.css`, plus
   `nord-dark.css` behind `prefers-color-scheme: dark`. Two-column layout: editor
   (flex-1, max-width ~860px) + sidebar (320px). `.mp-annotation {background:
@@ -412,6 +534,31 @@ involvement.
   empty title arg, `#token=` survives everywhere) and chain behavior against a
   fake `LaunchIO` — stop on first success, advance past a missing launcher,
   report exhaustion once, and never launch or report exhaustion when suppressed.
+- `tests/history.test.ts`: injected `HistoryIO` (in-memory fake fs): first
+  round makes the dir + exactly one append; ordering (old → new, current round
+  last); consecutive dedupe (incl. CRLF-only differences) vs A→B→A recording
+  three rounds; malformed-line matrix (skipped, good lines kept); mkdir/append
+  failure still returns `[...prior, current]` with exactly one log; invalid
+  session ids do zero disk IO; the `MAX_ROUNDS` cap; prune (stale siblings
+  removed, fresh kept, the session's own file never removed, non-`.jsonl`
+  skipped). Plus a direct `parseHistory` matrix.
+- `tests/history-view.test.ts`: `versionLabel` structure
+  (`/^Round \d+ · \d{1,2}:\d{2}/`) — no timezone-specific assertions.
+- `tests/dom/review-header.test.tsx`: plan path / cwd rendering with the
+  "inline plan (no file)" fallback; `roundNumber: null` hides badge and button;
+  non-null shows `Round {n}` and the button fires `onViewChanges` exactly once.
+- `tests/dom/diff-overlay.test.tsx`: the `DiffOverlayView` shell only (real
+  Crepe stays out of happy-dom): one option per version labeled via
+  `versionLabel`, select value / `onSelect` (invalid values ignored),
+  Escape / backdrop / Close dismissal, dialog a11y attributes, initial focus.
+- `tests/hook.test.ts` asserts `recordHistory` runs with the right input on the
+  happy path (and `planPath: null` for inline plans) and never runs on
+  passthrough exits; `tests/hook.e2e.test.ts` drives the real binary across
+  rounds of one session (request changes → next round's `/api/review` carries
+  the prior round in `history`, the `.jsonl` file grows, an unchanged
+  resubmission dedupes); `tests/dist.test.ts` asserts the built CSS ships the
+  `.mp-diff-overlay` Accept/Reject-hiding rule (the read-only guarantee's
+  canary).
 
 ## Milestones
 

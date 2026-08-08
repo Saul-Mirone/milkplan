@@ -19,6 +19,22 @@ export const TOKEN = 'test-token-0123456789abcdef'
 
 export const reviewPayload: ReviewPayload = {
   plan: '# Plan under review',
+  // Two earlier rounds, the last differing from `plan`, so a round-trip
+  // assertion proves history survives the wire rather than echoing the plan.
+  history: [
+    {
+      ts: 1_700_000_000_000,
+      round: 1,
+      planPath: '/Users/test/.claude/plans/sunny-rolling-otter.md',
+      markdown: '# Plan under review (round 1)',
+    },
+    {
+      ts: 1_700_000_060_000,
+      round: 2,
+      planPath: '/Users/test/.claude/plans/sunny-rolling-otter.md',
+      markdown: '# Plan under review (round 2)',
+    },
+  ],
   meta: {
     planPath: '/Users/test/.claude/plans/sunny-rolling-otter.md',
     cwd: '/Users/test/project',
