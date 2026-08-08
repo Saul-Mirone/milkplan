@@ -7,12 +7,59 @@ import {
   type CSSProperties,
 } from 'react'
 
-import type { ViewGetter } from '../hooks/useAnnotations'
+import type { DeepReadonly } from '../../shared/readonly'
 
 const POPOVER_WIDTH = 320
+/** Room left below the popover so its Save/Cancel row stays on screen. */
+const POPOVER_HEIGHT = 180
+const VIEWPORT_MARGIN = 8
+
+export interface PopoverCoords {
+  left: number
+  bottom: number
+}
+
+export interface Viewport {
+  width: number
+  height: number
+}
+
+/**
+ * Places the popover next to the annotated text, clamped into the viewport.
+ *
+ * This arithmetic is the only thing keeping the comment box reachable in the
+ * two cases it exists for: an annotation at the right edge (unclamped, the box
+ * would hang off-screen with its buttons unreachable) and one near the bottom
+ * of a long plan (it would open below the fold). The left clamp is applied
+ * outermost so a viewport narrower than the popover still yields the margin
+ * rather than a negative offset.
+ */
+export function popoverStyle(
+  coords: DeepReadonly<PopoverCoords>,
+  viewport: DeepReadonly<Viewport>,
+): CSSProperties {
+  const left = Math.max(
+    VIEWPORT_MARGIN,
+    Math.min(coords.left, viewport.width - POPOVER_WIDTH - VIEWPORT_MARGIN),
+  )
+  const top = Math.min(
+    coords.bottom + VIEWPORT_MARGIN,
+    viewport.height - POPOVER_HEIGHT,
+  )
+  return { left, top, width: POPOVER_WIDTH }
+}
+
+/**
+ * The slice of an EditorView this component reads. Narrowing to it keeps the
+ * popover renderable without an editor instance — EditorView satisfies it
+ * structurally, and coordsAtPos is genuinely all that is used.
+ */
+export interface CoordsSource {
+  coordsAtPos: (pos: number) => PopoverCoords
+}
 
 interface CommentPopoverProps {
-  getView: ViewGetter
+  getView: () => CoordsSource | null
   from: number
   onSave: (comment: string) => void
   onCancel: () => void
@@ -99,13 +146,10 @@ export function CommentPopover({
 
   const style = useMemo<CSSProperties>(() => {
     if (view === null) return { width: POPOVER_WIDTH }
-    const coords = view.coordsAtPos(from)
-    const left = Math.max(
-      8,
-      Math.min(coords.left, window.innerWidth - POPOVER_WIDTH - 8),
-    )
-    const top = Math.min(coords.bottom + 8, window.innerHeight - 180)
-    return { left, top, width: POPOVER_WIDTH }
+    return popoverStyle(view.coordsAtPos(from), {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
   }, [view, from])
 
   if (view === null) return null

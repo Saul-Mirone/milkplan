@@ -6,8 +6,16 @@ import {
 } from '../shared/protocol'
 import type { DeepReadonly } from '../shared/readonly'
 
-function tokenFromHash(): string {
-  const match = /[#&]token=([^&]+)/u.exec(window.location.hash)
+/**
+ * Reads the review token out of a location hash.
+ *
+ * The token rides in the fragment so it never reaches a server log or the
+ * browser's history sync. Falling back to DEV_TOKEN is what lets `vite dev`
+ * work without a fragment; in production a miss means every API call 403s, so
+ * the extraction has to match exactly what open-browser puts in the URL.
+ */
+export function tokenFromHash(hash: string): string {
+  const match = /[#&]token=([^&]+)/u.exec(hash)
   return match?.[1] ?? DEV_TOKEN
 }
 
@@ -16,7 +24,9 @@ async function api<T>(
   method: 'GET' | 'POST',
   body?: unknown,
 ): Promise<T> {
-  const headers: Record<string, string> = { [TOKEN_HEADER]: tokenFromHash() }
+  const headers: Record<string, string> = {
+    [TOKEN_HEADER]: tokenFromHash(window.location.hash),
+  }
   if (body !== undefined) headers['content-type'] = 'application/json'
   const response = await fetch(path, {
     method,

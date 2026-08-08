@@ -1,38 +1,35 @@
-import { existsSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import {
-  LOCAL_FILE,
-  SHARED_FILE,
   loadSettings,
   resolveHookCommand,
+  LOCAL_FILE,
+  SHARED_FILE,
 } from './init'
+import { realInitIO, type InitIO } from './init-io'
 import { removeMilkplanHooks } from './settings-hooks'
-
-function log(message: string): void {
-  process.stderr.write(`[milkplan] ${message}\n`)
-}
+import type { DeepReadonly } from '../shared/readonly'
 
 function reportOutcome(
   total: number,
   unreadable: boolean,
   candidates: readonly string[],
+  io: DeepReadonly<InitIO>,
 ): void {
   if (total > 0) {
-    log(
+    io.log(
       'the npm package itself is untouched — remove it with: npm uninstall -g milkplan',
     )
     return
   }
   if (unreadable) {
-    log(
+    io.log(
       'no milkplan hooks removed — a settings file could not be parsed (see above)',
     )
     return
   }
-  log(`no milkplan hooks found in:\n  ${candidates.join('\n  ')}`)
-  log(
+  io.log(`no milkplan hooks found in:\n  ${candidates.join('\n  ')}`)
+  io.log(
     'project files are looked up from the current directory — run uninstall from the project root if yours lives elsewhere',
   )
 }
@@ -42,28 +39,33 @@ function reportOutcome(
  * current project's settings (both the shared and the local file). The npm
  * package itself is left alone.
  */
-export function runUninstall(args: readonly string[]): void {
+export function runUninstall(
+  args: readonly string[],
+  io: DeepReadonly<InitIO> = realInitIO,
+): void {
   if (args.length > 0) {
-    log(`unknown option for uninstall: ${args[0]} (uninstall takes no options)`)
-    process.exitCode = 1
+    io.log(
+      `unknown option for uninstall: ${args[0]} (uninstall takes no options)`,
+    )
+    io.fail()
     return
   }
 
   const candidates = [
     ...new Set([
-      join(homedir(), '.claude', SHARED_FILE),
-      join(process.cwd(), '.claude', SHARED_FILE),
-      join(process.cwd(), '.claude', LOCAL_FILE),
+      join(io.homedir(), '.claude', SHARED_FILE),
+      join(io.cwd(), '.claude', SHARED_FILE),
+      join(io.cwd(), '.claude', LOCAL_FILE),
     ]),
   ]
   // Catches a checkout install whose path lacks the substring "milkplan".
-  const ownCommands = [resolveHookCommand()]
+  const ownCommands = [resolveHookCommand(io)]
 
   let total = 0
   let unreadable = false
   for (const settingsPath of candidates) {
-    if (!existsSync(settingsPath)) continue
-    const settings = loadSettings(settingsPath)
+    if (!io.exists(settingsPath)) continue
+    const settings = loadSettings(settingsPath, io)
     if (settings === null) {
       // Already logged by loadSettings; keep cleaning the other files.
       unreadable = true
@@ -74,11 +76,11 @@ export function runUninstall(args: readonly string[]): void {
       ownCommands,
     )
     if (removed === 0) continue
-    writeFileSync(settingsPath, `${JSON.stringify(next, null, 2)}\n`)
-    log(
+    io.writeFile(settingsPath, `${JSON.stringify(next, null, 2)}\n`)
+    io.log(
       `removed ${removed} milkplan hook${removed === 1 ? '' : 's'} from ${settingsPath}`,
     )
     total += removed
   }
-  reportOutcome(total, unreadable, candidates)
+  reportOutcome(total, unreadable, candidates, io)
 }

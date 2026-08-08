@@ -1,16 +1,6 @@
-import { spawnSync } from 'node:child_process'
-import {
-  appendFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join, resolve, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
+import { realInitIO, type InitIO } from './init-io'
 import {
   addMilkplanHook,
   isJsonObject,
@@ -20,74 +10,87 @@ import {
   type Settings,
 } from './settings-hooks'
 import { VERSION } from './version'
+import type { DeepReadonly } from '../shared/readonly'
 
 export const LOCAL_FILE = 'settings.local.json'
 export const SHARED_FILE = 'settings.json'
 
-function log(message: string): void {
-  process.stderr.write(`[milkplan] ${message}\n`)
+function isNpmInstall(selfPath: string): boolean {
+  return selfPath.split(sep).includes('node_modules')
 }
 
-function selfPath(): string {
-  return fileURLToPath(import.meta.url)
-}
-
-function isNpmInstall(): boolean {
-  return selfPath().split(sep).includes('node_modules')
-}
-
-export function resolveHookCommand(): string {
-  const self = selfPath()
-  if (isNpmInstall()) return 'npx -y milkplan'
-  // Hooks run with Claude Code's environment, where a version-manager node
-  // (fnm/nvm) may not be on PATH — pin the interpreter that ran init.
-  // realpath matters: fnm's multishell symlink dies with the shell session.
-  // Quote both paths: the hook command runs through a shell, and e.g. fnm's
-  // node lives under "Application Support" (a space) on macOS.
-  const node = realpathSync(process.execPath)
-  const parts = self.split(sep)
-  if (parts[parts.length - 2] === 'dist') return `"${node}" "${self}"`
+/**
+ * The hook command this install should register, as a pure function of where
+ * milkplan lives and which node is running it.
+ *
+ * An npm install gets the portable `npx` form. Everything else pins absolute
+ * paths, because hooks run with Claude Code's environment where a
+ * version-manager node (fnm/nvm) may not be on PATH. Both paths are quoted:
+ * the command goes through a shell, and fnm's node lives under "Application
+ * Support" — a space — on macOS. Losing either pair of quotes makes every plan
+ * approval fail silently.
+ */
+export function hookCommandFor(selfPath: string, nodePath: string): string {
+  if (isNpmInstall(selfPath)) return 'npx -y milkplan'
+  const parts = selfPath.split(sep)
+  if (parts[parts.length - 2] === 'dist') return `"${nodePath}" "${selfPath}"`
   // Running from sources (src/cli/*): point at the build output.
-  return `"${node}" "${resolve(dirname(self), '..', '..', 'dist', 'cli.mjs')}"`
+  return `"${nodePath}" "${resolve(dirname(selfPath), '..', '..', 'dist', 'cli.mjs')}"`
 }
 
-function resolveSharedCommand(): string | null {
-  if (!isNpmInstall()) {
-    log(
+export function resolveHookCommand(
+  io: DeepReadonly<InitIO> = realInitIO,
+): string {
+  return hookCommandFor(io.selfPath(), io.nodePath())
+}
+
+function resolveSharedCommand(io: DeepReadonly<InitIO>): string | null {
+  if (!isNpmInstall(io.selfPath())) {
+    io.log(
       "a shared hook runs on every teammate's machine, but this milkplan runs from a source checkout — its command would embed paths that only exist here.",
     )
-    log(
+    io.log(
       'install from npm first (npm install -g milkplan), or drop --shared for a machine-local hook in settings.local.json.',
     )
-    process.exitCode = 1
+    io.fail()
     return null
   }
   // Pin the version: a committed hook must not drift under teammates.
   return `npx -y milkplan@${VERSION}`
 }
 
-export function loadSettings(settingsPath: string): Settings | null {
-  if (!existsSync(settingsPath)) return {}
+export function loadSettings(
+  settingsPath: string,
+  io: DeepReadonly<InitIO> = realInitIO,
+): Settings | null {
+  if (!io.exists(settingsPath)) return {}
+  const raw = io.readFile(settingsPath)
   let parsed: unknown
   try {
-    parsed = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    if (raw === null) throw new Error('unreadable')
+    parsed = JSON.parse(raw)
   } catch {
-    log(`could not parse ${settingsPath}; refusing to overwrite it`)
-    process.exitCode = 1
+    io.log(`could not parse ${settingsPath}; refusing to overwrite it`)
+    io.fail()
     return null
   }
   if (!isJsonObject(parsed)) {
-    log(`${settingsPath} is not a JSON object; refusing to overwrite it`)
-    process.exitCode = 1
+    io.log(`${settingsPath} is not a JSON object; refusing to overwrite it`)
+    io.fail()
     return null
   }
   return parsed
 }
 
 /** loadSettings without the error reporting, for advisory sibling checks. */
-function peekSettings(settingsPath: string): Settings | null {
+function peekSettings(
+  settingsPath: string,
+  io: DeepReadonly<InitIO>,
+): Settings | null {
+  const raw = io.readFile(settingsPath)
+  if (raw === null) return null
   try {
-    const parsed: unknown = JSON.parse(readFileSync(settingsPath, 'utf8'))
+    const parsed: unknown = JSON.parse(raw)
     return isJsonObject(parsed) ? parsed : null
   } catch {
     return null
@@ -95,44 +98,68 @@ function peekSettings(settingsPath: string): Settings | null {
 }
 
 /**
+ * JSON with every object's keys sorted, for comparing two settings objects by
+ * content rather than by key order.
+ *
+ * Needed because the remove-then-add refresh below moves `hooks` to the end
+ * whenever removal empties it — which is the normal case for a file whose only
+ * milkplan entry is being refreshed. Comparing raw JSON.stringify output would
+ * therefore never report "unchanged", so every `init` would rewrite the file,
+ * claim it "refreshed" a hook it did not, and reorder the user's keys (a
+ * spurious git diff on every run under --shared).
+ */
+export function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (isJsonObject(value)) {
+    const entries = Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`)
+    return `{${entries.join(',')}}`
+  }
+  // Values reachable here come from JSON.parse, so `undefined` — the one input
+  // JSON.stringify answers with undefined — cannot occur.
+  return JSON.stringify(value)
+}
+
+/**
  * settings.local.json holds machine-specific paths and must never reach the
  * repo. Tracked already → warn. Untracked and unignored → ignore it via
  * .git/info/exclude (repo-local, nothing of the user's gets edited).
  */
-function ensureLocalIgnored(settingsPath: string): void {
+function ensureLocalIgnored(
+  settingsPath: string,
+  io: DeepReadonly<InitIO>,
+): void {
   const projectDir = dirname(dirname(settingsPath))
   try {
-    const tracked = spawnSync(
-      'git',
+    const tracked = io.git(
       ['ls-files', '--error-unmatch', settingsPath],
-      { cwd: projectDir, stdio: 'ignore' },
+      projectDir,
     )
     // git unavailable → nothing to manage.
-    if (tracked.error !== undefined) return
+    if (tracked.status === null) return
     if (tracked.status === 0) {
-      log(
+      io.log(
         `warning: ${settingsPath} is tracked by git — it is a machine-local file and should not be committed. Run: git rm --cached ${settingsPath}`,
       )
       return
     }
-    const ignored = spawnSync('git', ['check-ignore', '-q', settingsPath], {
-      cwd: projectDir,
-      stdio: 'ignore',
-    })
     // Already ignored (e.g. by a previous init or the user's own .gitignore).
-    if (ignored.status === 0) return
-    const gitPath = spawnSync(
-      'git',
+    if (io.git(['check-ignore', '-q', settingsPath], projectDir).status === 0)
+      return
+    const gitPath = io.git(
       ['rev-parse', '--git-path', 'info/exclude'],
-      { cwd: projectDir, encoding: 'utf8' },
+      projectDir,
     )
     // Not a git repository at all.
     if (gitPath.status !== 0) return
     const excludePath = resolve(projectDir, gitPath.stdout.trim())
-    mkdirSync(dirname(excludePath), { recursive: true })
+    io.mkdir(dirname(excludePath))
     // "**/" so the pattern holds even when init ran below the repo root.
-    appendFileSync(excludePath, `**/.claude/${LOCAL_FILE}\n`)
-    log(`ignored .claude/${LOCAL_FILE} via ${excludePath} (machine-local file)`)
+    io.appendFile(excludePath, `**/.claude/${LOCAL_FILE}\n`)
+    io.log(
+      `ignored .claude/${LOCAL_FILE} via ${excludePath} (machine-local file)`,
+    )
   } catch {
     // Ignore management must never break init itself.
   }
@@ -146,13 +173,14 @@ function warnAboutStackedHooks(
   targetPath: string,
   otherPaths: readonly string[],
   ownCommands: readonly string[],
+  io: DeepReadonly<InitIO>,
 ): void {
   for (const otherPath of otherPaths) {
-    if (otherPath === targetPath || !existsSync(otherPath)) continue
-    const settings = peekSettings(otherPath)
+    if (otherPath === targetPath || !io.exists(otherPath)) continue
+    const settings = peekSettings(otherPath, io)
     if (settings === null || !settingsRunMilkplan(settings, ownCommands))
       continue
-    log(
+    io.log(
       `note: ${otherPath} also runs milkplan. Hooks stack across settings files, so plan approvals would open two reviews — remove the extra entry (milkplan uninstall cleans user and project settings).`,
     )
   }
@@ -166,35 +194,67 @@ interface InitTarget {
   command: string
 }
 
-function resolveInitTarget(args: readonly string[]): InitTarget | null {
+function resolveInitTarget(
+  args: readonly string[],
+  io: DeepReadonly<InitIO>,
+): InitTarget | null {
   const unknown = args.find((arg) => arg !== '--project' && arg !== '--shared')
   if (unknown !== undefined) {
-    log(`unknown option for init: ${unknown} (expected --project, --shared)`)
-    process.exitCode = 1
+    io.log(`unknown option for init: ${unknown} (expected --project, --shared)`)
+    io.fail()
     return null
   }
   const project = args.includes('--project')
   const shared = args.includes('--shared')
   if (shared && !project) {
-    log('--shared only applies to project installs; use --project --shared')
-    process.exitCode = 1
+    io.log('--shared only applies to project installs; use --project --shared')
+    io.fail()
     return null
   }
-  const settingsDir = join(project ? process.cwd() : homedir(), '.claude')
+  const settingsDir = join(project ? io.cwd() : io.homedir(), '.claude')
   const settingsPath = join(
     settingsDir,
     project && !shared ? LOCAL_FILE : SHARED_FILE,
   )
-  const command = shared ? resolveSharedCommand() : resolveHookCommand()
+  const command = shared ? resolveSharedCommand(io) : resolveHookCommand(io)
   if (command === null) return null
   // Backstop independent of the branching above: the shareable project file
   // never receives a machine-specific command, whatever future edits do.
   if (project && shared && isMachineSpecific(command)) {
-    log(`refusing to write a machine-specific command into ${settingsPath}`)
-    process.exitCode = 1
+    io.log(`refusing to write a machine-specific command into ${settingsPath}`)
+    io.fail()
     return null
   }
   return { project, shared, settingsDir, settingsPath, command }
+}
+
+/** Merges the hook into the target file, writing only when something changed. */
+function mergeAndWrite(
+  target: DeepReadonly<InitTarget>,
+  settings: DeepReadonly<Settings>,
+  io: DeepReadonly<InitIO>,
+): void {
+  const { settingsDir, settingsPath, command } = target
+  // Remove-then-add: a re-run refreshes stale entries (old node paths after a
+  // version-manager upgrade, an outdated shared version pin) instead of
+  // leaving them in place behind an "already installed" message.
+  const before = stableJson(settings)
+  const cleaned = removeMilkplanHooks(settings, [command])
+  const next = addMilkplanHook(cleaned.settings, command).settings
+
+  if (stableJson(next) === before) {
+    io.log(
+      `${settingsPath} already runs milkplan with this command; nothing to do`,
+    )
+    return
+  }
+  io.mkdir(settingsDir)
+  io.writeFile(settingsPath, `${JSON.stringify(next, null, 2)}\n`)
+  io.log(
+    cleaned.removed > 0
+      ? `refreshed hook in ${settingsPath}: ${command}`
+      : `registered hook in ${settingsPath}: ${command}`,
+  )
 }
 
 /**
@@ -206,43 +266,27 @@ function resolveInitTarget(args: readonly string[]): InitTarget | null {
  * Only `--shared` touches the committed settings.json, and then only with a
  * portable, version-pinned command.
  */
-export function runInit(args: readonly string[]): void {
-  const target = resolveInitTarget(args)
+export function runInit(
+  args: readonly string[],
+  io: DeepReadonly<InitIO> = realInitIO,
+): void {
+  const target = resolveInitTarget(args, io)
   if (target === null) return
-  const { project, shared, settingsDir, settingsPath, command } = target
 
-  const settings = loadSettings(settingsPath)
+  const settings = loadSettings(target.settingsPath, io)
   if (settings === null) return
+  mergeAndWrite(target, settings, io)
 
-  // Remove-then-add: a re-run refreshes stale entries (old node paths after a
-  // version-manager upgrade, an outdated shared version pin) instead of
-  // leaving them in place behind an "already installed" message.
-  const before = JSON.stringify(settings)
-  const cleaned = removeMilkplanHooks(settings, [command])
-  const next = addMilkplanHook(cleaned.settings, command).settings
-
-  if (JSON.stringify(next) === before) {
-    log(
-      `${settingsPath} already runs milkplan with this command; nothing to do`,
-    )
-  } else {
-    mkdirSync(settingsDir, { recursive: true })
-    writeFileSync(settingsPath, `${JSON.stringify(next, null, 2)}\n`)
-    log(
-      cleaned.removed > 0
-        ? `refreshed hook in ${settingsPath}: ${command}`
-        : `registered hook in ${settingsPath}: ${command}`,
-    )
-  }
-
-  if (project && !shared) ensureLocalIgnored(settingsPath)
+  const { project, shared, settingsDir, settingsPath, command } = target
+  if (project && !shared) ensureLocalIgnored(settingsPath, io)
   if (project)
     warnAboutStackedHooks(
       settingsPath,
       [
         join(settingsDir, shared ? LOCAL_FILE : SHARED_FILE),
-        join(homedir(), '.claude', SHARED_FILE),
+        join(io.homedir(), '.claude', SHARED_FILE),
       ],
       [command],
+      io,
     )
 }
