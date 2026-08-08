@@ -6,10 +6,12 @@ import {
   passThroughOnLaunchFailure,
   runHook,
 } from '../src/cli/hook'
+import type { PlanVersion } from '../src/shared/protocol'
 import {
   captureExit,
   captureExitAsync,
   fakeHookIO,
+  FAKE_HISTORY_TS,
   FAKE_URL,
 } from './helpers/fake-hook-io'
 
@@ -128,6 +130,78 @@ describe('runHook — happy path', () => {
 
     expect(fake.state.serverStarts).toBe(1)
     expect(fake.state.exits).toEqual([])
+  })
+})
+
+// oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
+describe('runHook — history recording', () => {
+  it('records the submitted round before the server starts', async () => {
+    const fake = fakeHookIO()
+    await runHook(VALID, fake.io)
+
+    expect(fake.state.historyRecords).toEqual([
+      {
+        sessionId: 's1',
+        planPath: '/Users/dev/.claude/plans/sunny-rolling-otter.md',
+        markdown: '# Plan under review',
+      },
+    ])
+    // Recording must come first: once the server is up a decision could race
+    // the write, and a passthrough exit must never have recorded anything.
+    expect(fake.state.events.slice(0, 2)).toEqual([
+      'record-history',
+      'start-server',
+    ])
+  })
+
+  it('records an inline plan with a null planPath', async () => {
+    const fake = fakeHookIO({
+      plan: { source: 'inline', markdown: '# Inline plan' },
+    })
+    await runHook(VALID, fake.io)
+
+    expect(fake.state.historyRecords).toEqual([
+      { sessionId: 's1', planPath: null, markdown: '# Inline plan' },
+    ])
+  })
+
+  it('serves the prior rounds only — the current round never repeats in the payload', async () => {
+    // recordHistory returns the full versions, current round last; the
+    // payload must carry everything BUT that last entry.
+    const prior: PlanVersion = {
+      ts: FAKE_HISTORY_TS,
+      round: 1,
+      planPath: '/Users/dev/.claude/plans/sunny-rolling-otter.md',
+      markdown: '# Round 1',
+    }
+    const current: PlanVersion = {
+      ts: FAKE_HISTORY_TS + 60_000,
+      round: 2,
+      planPath: '/Users/dev/.claude/plans/sunny-rolling-otter.md',
+      markdown: '# Plan under review',
+    }
+    const fake = fakeHookIO({ history: [prior, current] })
+    await runHook(VALID, fake.io)
+
+    const session = fake.state.sessions.at(0)
+    expect(session?.payload.history).toEqual([prior])
+    expect(session?.payload.plan).toBe('# Plan under review')
+  })
+
+  it('records nothing on any passthrough exit', async () => {
+    // The insertion point sits after every passthrough: a round nobody
+    // reviews must not enter the history.
+    const malformed = fakeHookIO()
+    await captureExitAsync(runHook('not json at all', malformed.io))
+    const planless = fakeHookIO({ plan: { source: 'none' } })
+    await captureExitAsync(runHook(VALID, planless.io))
+    const headless = fakeHookIO({
+      support: { kind: 'unavailable', reason: 'no DISPLAY' },
+    })
+    await captureExitAsync(runHook(VALID, headless.io))
+
+    for (const fake of [malformed, planless, headless])
+      expect(fake.state.historyRecords).toEqual([])
   })
 })
 

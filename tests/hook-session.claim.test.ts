@@ -41,6 +41,7 @@ function sessionFor(
   return buildSession({
     plan,
     payload: payload({ tool_input: toolInput }),
+    history: [],
     getRunning: () => ({ url: '', close: () => {} }),
     // The ordering suites build their own session so they can observe this;
     // here it only has to exist.
@@ -105,6 +106,7 @@ describe('buildSession — one review, one answer', () => {
     const session = buildSession({
       plan: filePlan,
       payload: payload(),
+      history: [],
       getRunning: () => ({ url: '', close: () => {} }),
       onSettle: () => {
         settles += 1

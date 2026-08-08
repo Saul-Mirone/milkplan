@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { buildSession, type FoundPlan } from '../src/cli/hook'
-import type { DecisionRequest } from '../src/shared/protocol'
+import type { DecisionRequest, PlanVersion } from '../src/shared/protocol'
 import type { DeepReadonly } from '../src/shared/readonly'
 import {
   captureExit,
@@ -46,6 +46,7 @@ function sessionFor(
   return buildSession({
     plan,
     payload: payload({ tool_input: toolInput }),
+    history: [],
     getRunning: () => ({ url: '', close: () => {} }),
     // The ordering suites build their own session so they can observe this;
     // here it only has to exist.
@@ -176,6 +177,7 @@ describe('buildSession — stdout discipline', () => {
     const session = buildSession({
       plan: filePlan,
       payload: payload(),
+      history: [],
       getRunning: () => ({
         url: '',
         close: () => {
@@ -202,6 +204,7 @@ describe('buildSession — skip', () => {
     const session = buildSession({
       plan: filePlan,
       payload: payload(),
+      history: [],
       getRunning: () => ({
         url: '',
         close: () => {
@@ -229,6 +232,29 @@ describe('buildSession — review payload', () => {
     const fake = fakeHookIO()
     expect(sessionFor(fake, filePlan).payload.meta.planPath).toBe(PLAN_PATH)
     expect(sessionFor(fake, inlinePlan).payload.meta.planPath).toBeNull()
+  })
+
+  it('forwards the recorded history into the payload untouched', () => {
+    const fake = fakeHookIO()
+    const history: PlanVersion[] = [
+      {
+        ts: 1_700_000_000_000,
+        round: 1,
+        planPath: PLAN_PATH,
+        markdown: '# Round 1',
+      },
+    ]
+    const session = buildSession({
+      plan: filePlan,
+      payload: payload(),
+      history,
+      getRunning: () => ({ url: '', close: () => {} }),
+      onSettle: () => {},
+      io: fake.io,
+    })
+
+    // Same reference, not a copy: buildSession must not rewrite the rounds.
+    expect(session.payload.history).toBe(history)
   })
 
   it('mints a fresh 32-character hex token per session', () => {

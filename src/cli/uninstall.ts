@@ -20,6 +20,11 @@ function reportOutcome(
     io.log(
       'the npm package itself is untouched — remove it with: npm uninstall -g milkplan',
     )
+    // Never deleted automatically: destroying user data a reinstall might want
+    // is not this command's call to make.
+    io.log(
+      'plan review history (plan text) remains in ~/.claude/milkplan/history/ — delete it yourself if unwanted',
+    )
     return
   }
   if (unreadable) {

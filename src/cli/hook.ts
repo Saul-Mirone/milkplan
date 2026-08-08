@@ -5,6 +5,7 @@ import { realHookIO, type HookIO } from './hook-io'
 import type { ReviewSession, RunningServer } from './server'
 import type {
   HookPayload,
+  PlanVersion,
   ResolvedPlan,
   ReviewPayload,
 } from '../shared/protocol'
@@ -84,6 +85,8 @@ function oneAnswer(onSettle: () => void): () => boolean {
 export interface SessionDeps {
   plan: FoundPlan
   payload: HookPayload
+  /** This session's earlier rounds — never includes the current one. */
+  history: readonly PlanVersion[]
   /** Deferred: the handle exists only once the server is listening. */
   getRunning: () => RunningServer | null
   onSettle: () => void
@@ -106,6 +109,7 @@ export function buildSession(
   return {
     payload: {
       plan: plan.markdown,
+      history: deps.history,
       meta: {
         planPath: plan.source === 'file' ? plan.path : null,
         cwd: payload.cwd,
@@ -230,11 +234,23 @@ export async function runHook(
   const plan = resolvePlanOrPassThrough(payload, io)
   const support = browserSupportOrPassThrough(io)
 
+  // Only after every passthrough exit: a round nobody reviews is not recorded.
+  // No try/catch — recordHistory is total, same as io.resolve.
+  const versions = io.recordHistory({
+    sessionId: payload.session_id,
+    planPath: plan.source === 'file' ? plan.path : null,
+    markdown: plan.markdown,
+  })
+  // Drop the current round (always last: append, dedupe and degraded paths
+  // alike); the payload carries it as `plan`.
+  const history = versions.slice(0, -1)
+
   let running: RunningServer | null = null
   let settled = false
   const session = buildSession({
     plan,
     payload,
+    history,
     getRunning: () => running,
     onSettle: () => {
       settled = true

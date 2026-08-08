@@ -46,6 +46,9 @@ function devReviewApi(): Plugin {
       const session: ReviewSession = {
         payload: {
           plan: readFileSync(planPath, 'utf8'),
+          // Dev history arrives with the diff-overlay UI; empty keeps the
+          // payload honest for a first-round session.
+          history: [],
           meta: {
             planPath,
             cwd: process.cwd(),
