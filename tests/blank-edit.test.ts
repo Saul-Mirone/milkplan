@@ -62,9 +62,11 @@ describe('editedMarkdownOf', () => {
     }
   })
 
-  it('passes real content through untouched, including its surrounding blank lines', () => {
-    const editedMarkdown = '\n# Revised plan\n\nStep one.\n'
-    expect(editedMarkdownOf(decision({ editedMarkdown }))).toBe(editedMarkdown)
+  it('keeps real content, canonicalized and stripped of its surrounding blank lines', () => {
+    const editedMarkdown = '\n# Revised plan\n\n* Step one.\n'
+    expect(editedMarkdownOf(decision({ editedMarkdown }))).toBe(
+      '# Revised plan\n\n- Step one.',
+    )
   })
 
   it('reports no edit when the field is absent', () => {

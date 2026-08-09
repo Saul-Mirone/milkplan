@@ -82,7 +82,7 @@ describe('buildDecisionOutput — approve', () => {
     expect(
       allowOutput(output).hookSpecificOutput.decision.updatedInput,
     ).toEqual({
-      plan: '# Revised\n',
+      plan: '# Revised',
       planFilePath: '/x/plan.md',
     })
   })

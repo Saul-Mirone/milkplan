@@ -164,6 +164,39 @@ the next round's submission baseline includes those edits: the diff shows
 everything between round N's submission and round N+1's submission — including
 the reviewer's write-backs at round N's decision — not only Claude's revision.
 
+What a round stores is the _canonicalized_ submission, not its bytes: every
+round goes through `canonicalizeMarkdown` on the way in, and so does everything
+written back out. Two rounds therefore share one markdown style, and the diff
+reports content changes rather than the style drift between Claude's output and
+the editor's serializer. Combined with the deny message asking Claude to leave
+unaddressed sections verbatim, what surfaces in the overlay stays close to
+"what the feedback caused".
+
+### `src/cli/canonical.ts`
+
+```ts
+export function canonicalizeMarkdown(markdown: string): string
+```
+
+A remark round-trip — `remark-parse` → `remark-gfm` → `remark-frontmatter` →
+`remark-stringify {bullet: '-', emphasis: '_', strong: '*', rule: '-'}` — then
+`normalizeMarkdown` to trim the trailing newline. The options reproduce
+Prettier's (and oxfmt's) markdown canon, so a formatter run over the plan file
+later does not fight the write-back.
+
+- **`remark-gfm` is load-bearing**: plans carry tables and task lists, which
+  without it parse as paragraphs and come back mangled.
+- **`remark-frontmatter` likewise**: a leading `---` block would otherwise read
+  as a thematic break and get rewritten.
+- **Idempotent and total** — anything remark cannot handle passes through, since
+  formatting is an enhancement and must never fail a review.
+- **Two call sites, both chokepoints**: `resolvePlanOrPassThrough` in `hook.ts`
+  (covers the payload the editor renders and the round that gets stored) and
+  `editedMarkdownOf` in `feedback.ts` (covers the plan-file write-back, the deny
+  message, `updatedInput.plan`, and the revised-plan context block).
+- **Not the oxfmt binary**: milkplan ships as an npm CLI with everything bundled
+  into `dist`, so it cannot depend on a formatter being installed on `PATH`.
+
 ### `src/cli/feedback.ts` (pure functions, exact templates)
 
 ```ts
@@ -222,12 +255,19 @@ during review) renders as:
   Overall feedback:
   <overallFeedback>
 
-  Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode.
+  Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch.
   ```
 
-  If the user also edited the text before requesting changes, append the revised
-  markdown under a `The user also directly edited the plan; their edited version:`
-  section so the edits are not lost.
+  If the user also edited the text before requesting changes, their markdown is
+  carried under a `The user also directly edited the plan; their edited version:`
+  section placed _before_ the closing directive, which then opens with `Revise
+the edited version above` so it names what to revise.
+
+  The scope constraint in that directive is what keeps the next round's diff
+  readable: without it, sections nobody commented on come back reworded and
+  bury the changes the reviewer actually asked for. The approve paths carry no
+  such directive on purpose — after an approval there is no next round, so
+  rewrite churn cannot reach a future diff.
 
 ⚠️ **Envelope caveat (verify empirically in a real session, M2):** docs disagree on
 (a) whether deny nests under `hookSpecificOutput` and (b) whether
@@ -482,8 +522,28 @@ void) | null` — both non-null render a right-aligned `Round {n}` badge and a
 - `diff/feature.ts`: `diffFeature(editor)` — Crepe feature adapter registering
   `@milkdown/kit/plugin/diff` + `@milkdown/kit/component/diff` before
   `create()`; sets `customBlockTypes: ['table', 'image-block', 'code_block']`
-  so decorations reach Crepe's custom node views. `diffConfig` keeps its
-  shipped default, which already ignores Crepe's volatile heading ids.
+  so decorations reach Crepe's custom node views. It also makes two corrections
+  without which untouched sections repaint:
+  - `diffConfig.ignoreAttrs` is **merged** (never replaced — the shipped default
+    ignoring Crepe's volatile heading ids has to survive) with the
+    formatting-only list attrs from `diff/ignore-attrs.ts`: `list_item`'s
+    `label` (the rendered ordinal — insert one numbered step and every later
+    item's identity changes), `listType` (redundant with the parent node type)
+    and `spread`, plus `spread` on both list types. `ordered_list.order` and the
+    GFM `list_item.checked` stay identity: a changed start number and a toggled
+    checkbox are real changes. Mark attrs are out of reach — the diff encoder
+    consults `ignoreAttrs` for nodes only — so emphasis marker style is handled
+    upstream by `canonicalizeMarkdown` instead.
+  - `trailingConfig.shouldAppend` is neutralized. Crepe always loads the
+    trailing plugin, which appends an empty paragraph to this (old-side) doc
+    whenever the plan ends in a list, code fence, or table; the new side is a
+    bare `parser()` doc that never gets one, so otherwise every such plan
+    reports a phantom change at the end. The pane is read-only, so trailing has
+    nothing to serve here anyway.
+
+  Consequence worth knowing: a round whose only revision was formatting now
+  reports "No changes between these rounds."
+
 - `components/DiffOverlay.tsx`: read-only diff modal (`role="dialog"`,
   `aria-modal`; Escape via a document-level listener scoped to the overlay's
   lifetime by its effect cleanup — a dialog-scoped handler goes deaf once a

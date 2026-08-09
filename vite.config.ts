@@ -35,9 +35,13 @@ export default defineConfig({
 })
 
 /**
- * Two static earlier rounds so `pnpm dev` demos the diff overlay: round1 →
- * current shows block-level adds/removes, round2 → current (the default
- * comparison) a single inline value change.
+ * Three static earlier rounds so `pnpm dev` demos the diff overlay: round1 →
+ * current shows block-level adds/removes, round2 → current a single inline
+ * value change, and round3 → current (the default comparison) one inserted
+ * numbered step — the case where every later step is renumbered, and so the
+ * one that regresses visibly if the diff ever counts list ordinals as node
+ * identity again. Every fixture ends in a list, which is also what would
+ * surface a phantom trailing-paragraph change.
  */
 function fixtureHistory(planPath: string): PlanVersion[] {
   const fixture = (name: string): string =>
@@ -54,6 +58,12 @@ function fixtureHistory(planPath: string): PlanVersion[] {
       round: 2,
       planPath,
       markdown: fixture('sample-plan.round2.md'),
+    },
+    {
+      ts: Date.now() - 5 * 60_000,
+      round: 3,
+      planPath,
+      markdown: fixture('sample-plan.round3.md'),
     },
   ]
 }

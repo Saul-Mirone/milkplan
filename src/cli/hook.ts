@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
+import { canonicalizeMarkdown } from './canonical'
 import { buildDecisionOutput, editedMarkdownOf } from './feedback'
 import { realHookIO, type HookIO } from './hook-io'
 import type { ReviewSession, RunningServer } from './server'
@@ -52,7 +53,9 @@ function writeEditedPlan(
 ): void {
   if (edited === undefined || planPath === null) return
   try {
-    io.writePlanFile(planPath, edited)
+    // editedMarkdownOf hands back trimmed canonical markdown; the file gets the
+    // final newline every other tool writing this path would leave behind.
+    io.writePlanFile(planPath, `${edited}\n`)
   } catch {
     io.log(
       `could not write edited plan to ${planPath}; delivering edits via context only`,
@@ -182,7 +185,16 @@ function parsePayloadOrPassThrough(
   return payload
 }
 
-/** Locates the plan, passing through when there is nothing to review. */
+/**
+ * Locates the plan, passing through when there is nothing to review.
+ *
+ * The markdown is canonicalized on the way in, which makes this the single
+ * entry point for everything downstream: what the editor shows, what is stored
+ * as this round, and what the next round is diffed against. Claude's markdown
+ * style drifts from round to round, and unless both sides share one canon that
+ * drift reads as changes in sections nobody touched. The plan file itself is
+ * left alone here — this path only reads.
+ */
 function resolvePlanOrPassThrough(
   payload: DeepReadonly<HookPayload>,
   io: DeepReadonly<HookIO>,
@@ -197,7 +209,7 @@ function resolvePlanOrPassThrough(
       ? `plan resolved from ${plan.path}`
       : 'plan from tool_input',
   )
-  return plan
+  return { ...plan, markdown: canonicalizeMarkdown(plan.markdown) }
 }
 
 /**

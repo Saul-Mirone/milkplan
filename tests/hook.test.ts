@@ -165,6 +165,22 @@ describe('runHook — history recording', () => {
     ])
   })
 
+  it('records and serves the round canonicalized, not as submitted', async () => {
+    // The round is what the NEXT round gets diffed against, so it has to be in
+    // the same canon the next submission will be — otherwise Claude's style
+    // drift between rounds reads as changes to untouched sections.
+    const fake = fakeHookIO({
+      plan: { source: 'inline', markdown: '# Plan\n\n* a\n* b\n\n1. x\n3. y' },
+    })
+    await runHook(VALID, fake.io)
+
+    const canonical = '# Plan\n\n- a\n- b\n\n1. x\n2. y'
+    expect(fake.state.historyRecords).toEqual([
+      { sessionId: 's1', planPath: null, markdown: canonical },
+    ])
+    expect(fake.state.sessions.at(0)?.payload.plan).toBe(canonical)
+  })
+
   it('serves the prior rounds only — the current round never repeats in the payload', async () => {
     // recordHistory returns the full versions, current round last; the
     // payload must carry everything BUT that last entry.
