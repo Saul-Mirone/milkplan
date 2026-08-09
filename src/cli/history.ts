@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 
+import { canonicalizeMarkdown } from './canonical'
 import { normalizeMarkdown } from '../shared/markdown'
 import type { PlanVersion } from '../shared/protocol'
 import type { DeepReadonly } from '../shared/readonly'
@@ -27,6 +28,11 @@ export interface HistoryIO {
 export interface RecordRoundInput {
   sessionId: string
   planPath: string | null
+  /**
+   * Expected canonical — the CLI runs every plan through canonicalizeMarkdown
+   * when it resolves one. Rounds read back are canonicalized too, so passing
+   * raw markdown here would only mis-compare against the dedupe baseline.
+   */
   markdown: string
 }
 
@@ -72,6 +78,14 @@ function isPlanVersion(value: unknown): value is PlanVersion {
  * Parses a JSONL history file. Blank lines, broken JSON and wrong shapes are
  * skipped silently, line by line — a torn concurrent append must cost at most
  * the one line it tore, never the whole history.
+ *
+ * Stored markdown is canonicalized on the way out, which is what makes this
+ * module's contract "every PlanVersion it returns is canonical" hold for rounds
+ * it did not write. The file is append-only and never rewritten, so entries
+ * recorded before canonicalization shipped keep their original style on disk;
+ * without this they would diff against a canonical current round as style
+ * changes to untouched sections, and dedupe would miss a style-only
+ * resubmission and store it as a new round.
  */
 export function parseHistory(raw: string): PlanVersion[] {
   const versions: PlanVersion[] = []
@@ -88,7 +102,7 @@ export function parseHistory(raw: string): PlanVersion[] {
       ts: value.ts,
       round: value.round,
       planPath: value.planPath,
-      markdown: value.markdown,
+      markdown: canonicalizeMarkdown(value.markdown),
     })
   }
   return versions

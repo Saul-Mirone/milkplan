@@ -1,3 +1,4 @@
+import { canonicalizeMarkdown } from './canonical'
 import type {
   AnnotationOut,
   DecisionRequest,
@@ -15,13 +16,18 @@ const EXCERPT_LIMIT = 200
  * empty `editedMarkdown` — which would otherwise be written over the plan file
  * and announced to Claude as the authoritative revision. `overallFeedback` and
  * `tool_input.plan` already have the same guard; this is the third input.
+ *
+ * Canonicalizing here covers every exit at once — the plan-file write-back, the
+ * deny message, `updatedInput.plan` and the revised-plan context block all read
+ * the edit through this function — so the editor's serializer style never
+ * reaches the next round as spurious diff noise.
  */
 export function editedMarkdownOf(
   decision: DeepReadonly<DecisionRequest>,
 ): string | undefined {
   const edited = decision.editedMarkdown
   if (edited === undefined || edited.trim() === '') return undefined
-  return edited
+  return canonicalizeMarkdown(edited)
 }
 
 function truncateExcerpt(text: string): string {
@@ -87,14 +93,19 @@ function buildDenyMessage(decision: DeepReadonly<DecisionRequest>): string {
     )
   if (decision.overallFeedback.trim() !== '')
     sections.push(`Overall feedback:\n${decision.overallFeedback}`)
-  sections.push(
-    'Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode.',
-  )
+  // The edited version goes before the closing directive so the directive
+  // stays last and can name it as the thing to revise.
   const edited = editedMarkdownOf(decision)
   if (edited !== undefined)
     sections.push(
       `The user also directly edited the plan; their edited version:\n\n${edited}`,
     )
+  // The scope constraint is what keeps the next round's diff readable: without
+  // it, sections the reviewer never commented on come back reworded and drown
+  // the changes they asked for.
+  sections.push(
+    `${edited === undefined ? 'Revise the plan' : 'Revise the edited version above'} to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch.`,
+  )
   return sections.join('\n\n')
 }
 

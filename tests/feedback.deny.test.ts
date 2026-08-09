@@ -70,7 +70,7 @@ describe('annotationEntry layout', () => {
       - the first
       - the second
 
-      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode."
+      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch."
     `)
   })
 })
@@ -103,7 +103,7 @@ describe('buildDecisionOutput — request changes', () => {
       Overall feedback:
       Rework the client key strategy.
 
-      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode."
+      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch."
     `)
   })
 
@@ -121,7 +121,7 @@ describe('buildDecisionOutput — request changes', () => {
       Overall feedback:
       Please split this into two phases.
 
-      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode."
+      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch."
     `)
   })
 
@@ -143,11 +143,11 @@ describe('buildDecisionOutput — request changes', () => {
       1. Regarding: "EVAL with a small Lua script"
          Comment: Use a Redis function.
 
-      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode."
+      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch."
     `)
   })
 
-  it('deny with edits appends the edited-version appendix', () => {
+  it('deny with edits carries the edited version, and points the directive at it', () => {
     const output = buildDecisionOutput(
       decision({
         action: 'request-changes',
@@ -162,13 +162,13 @@ describe('buildDecisionOutput — request changes', () => {
       Overall feedback:
       See my edits for the direction I want.
 
-      Revise the plan to address this feedback, then present the updated plan again using ExitPlanMode.
-
       The user also directly edited the plan; their edited version:
 
       # Reworked plan
 
-      Phase 1 only."
+      Phase 1 only.
+
+      Revise the edited version above to address this feedback, then present the updated plan again using ExitPlanMode. Change only what the feedback addresses; keep every other section verbatim — do not reword, reformat, renumber, or reflow parts of the plan the feedback does not touch."
     `)
   })
 })

@@ -161,7 +161,13 @@ describe('milkplan hook — end to end through the built CLI', () => {
 describe('milkplan hook — plan history across rounds', () => {
   // oxlint-disable-next-line eslint/max-lines-per-function -- see the describe: one causal chain of three runs.
   it('persists each submitted round, serves the prior ones, and dedupes a resubmission', async () => {
+    // What Claude writes to the plan file, and what milkplan serves and stores
+    // for it: rounds are canonicalized on the way in, which here trims the
+    // trailing newline. The two rounds therefore share one markdown style, so
+    // the diff between them can only show content changes.
     const REVISED = '# Revised plan\n\nStep one, tightened.\n'
+    const REVISED_CANONICAL = REVISED.trimEnd()
+    const PLAN_CANONICAL = PLAN.trimEnd()
 
     // Round 1: reviewed and sent back for changes.
     const { run, url, box } = await startReview()
@@ -183,8 +189,8 @@ describe('milkplan hook — plan history across rounds', () => {
     expect(review2.status).toBe(200)
     const payload2: unknown = JSON.parse(review2.body)
     expect(payload2).toMatchObject({
-      plan: REVISED,
-      history: [{ planPath: box.planPath, markdown: PLAN, round: 1 }],
+      plan: REVISED_CANONICAL,
+      history: [{ planPath: box.planPath, markdown: PLAN_CANONICAL, round: 1 }],
     })
     expect(typeof at(payload2, 'history', 0, 'ts')).toBe('number')
     expect(await postTo(second.url, '/api/skip', {})).toBe(200)
@@ -207,8 +213,8 @@ describe('milkplan hook — plan history across rounds', () => {
     expect(review3.status).toBe(200)
     const payload3: unknown = JSON.parse(review3.body)
     expect(payload3).toMatchObject({
-      plan: REVISED,
-      history: [{ planPath: box.planPath, markdown: PLAN, round: 1 }],
+      plan: REVISED_CANONICAL,
+      history: [{ planPath: box.planPath, markdown: PLAN_CANONICAL, round: 1 }],
     })
     expect(await postTo(third.url, '/api/skip', {})).toBe(200)
     expect(await third.run.done).toBe(0)

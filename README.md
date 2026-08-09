@@ -141,6 +141,13 @@ is what powers the "View changes" diff:
   written back to the plan file, so they surface as part of the _next_ round's
   submission — the diff shows everything that changed between two submissions,
   not only Claude's revision.
+- **Noise control:** every round is run through the same markdown formatter
+  before it is stored, and the diff ignores formatting-only differences such as
+  renumbered list items and tight-vs-loose spacing — so a step inserted halfway
+  down a numbered list highlights that step, not everything below it. Requesting
+  changes also asks Claude to leave sections your feedback doesn't address
+  untouched. A round whose only revision was formatting shows up as "no
+  changes".
 - **Retention:** the review UI is served the last 20 rounds of a session;
   history files untouched for about 30 days are pruned automatically.
 - **Failures:** history is best-effort. If it can't be read or written,
