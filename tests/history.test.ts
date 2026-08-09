@@ -92,7 +92,22 @@ describe('recordRound — dedupe', () => {
     const fake = fakeHistoryIO({ files: { [FILE]: fileOf([prior]) } })
     const result = recordRound(input('# Same\r\n\r\nBody\r\n'), fake.io)
 
-    expect(result).toEqual([prior])
+    // Same round, served canonical: the stored trailing newline is trimmed on
+    // read, and the original ts survives.
+    expect(result).toEqual([version(111, '# Same\n\nBody')])
+    expect(fake.state.appends).toEqual([])
+  })
+
+  it('collapses a resubmission that differs from a pre-canonicalization round only in style', () => {
+    // Rounds recorded before canonicalization shipped are still on disk in
+    // whatever style Claude wrote them. Without canonicalizing on read, the
+    // first review after an upgrade compares `* a` against the canonical `- a`,
+    // finds them different, and records a duplicate round for an unchanged plan.
+    const legacy = version(111, '# Plan\n\n* a\n* b')
+    const fake = fakeHistoryIO({ files: { [FILE]: fileOf([legacy]) } })
+    const result = recordRound(input('# Plan\n\n- a\n- b'), fake.io)
+
+    expect(result).toEqual([version(111, '# Plan\n\n- a\n- b')])
     expect(fake.state.appends).toEqual([])
   })
 
@@ -237,6 +252,17 @@ describe('parseHistory', () => {
   it('returns nothing for an empty or blank-only file', () => {
     expect(parseHistory('')).toEqual([])
     expect(parseHistory('\n\n  \n')).toEqual([])
+  })
+
+  it('canonicalizes stored markdown so rounds written before the canon still diff cleanly', () => {
+    // The file is append-only and never rewritten, so entries recorded by an
+    // older milkplan keep their original style on disk. Canonicalizing on read
+    // is what stops them repainting untouched content against a canonical
+    // current round.
+    const legacy = version(1, '# Plan\n\n* a\n\nSome *em*.\n\n1. x\n3. y\n')
+    expect(parseHistory(fileOf([legacy]))).toEqual([
+      version(1, '# Plan\n\n- a\n\nSome _em_.\n\n1. x\n2. y'),
+    ])
   })
 
   it('skips every malformed line while keeping its neighbors', () => {

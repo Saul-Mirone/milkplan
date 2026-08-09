@@ -116,7 +116,8 @@ export const MAX_ROUNDS = 20
 
 export function historyDirFor(home: string): string // <home>/.claude/milkplan/history
 export function historyFileFor(home: string, sessionId: string): string // <dir>/<sessionId>.jsonl
-// JSONL parse; blank, malformed, or misshapen lines are silently skipped per line.
+// JSONL parse; blank, malformed, or misshapen lines are silently skipped per
+// line. Markdown is canonicalized on the way out (see below).
 export function parseHistory(raw: string): PlanVersion[]
 // Persist this round, return the session's versions (old → new, current round
 // last, at most MAX_ROUNDS). TOTAL: never throws.
@@ -133,6 +134,16 @@ absorbs torn concurrent writes. The file is never rewritten: the `MAX_ROUNDS`
 cap is a read-time slice, and disk growth is bounded by the prune. Never writes
 into `~/.claude/plans/` (the `resolve-plan.ts` trust boundary — a distinct
 directory plus the `.jsonl` suffix).
+
+**Every `PlanVersion` this module returns is canonical.** `parseHistory` runs
+stored markdown through `canonicalizeMarkdown`, because the file is never
+rewritten and so still holds rounds recorded before that canon existed. Without
+it, the first review after an upgrade would diff a legacy round against a
+canonical current one and repaint untouched sections, and the step-3 dedupe
+would read a style-only resubmission as a new round. Migrating on read rather
+than rewriting the file keeps the append-only guarantee intact; the cost is
+bounded by `MAX_ROUNDS` (~38 ms at the cap, against a hook that also boots a
+server and a browser).
 
 `recordRound`:
 
