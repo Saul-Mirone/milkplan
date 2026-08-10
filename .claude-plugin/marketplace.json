@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "enorim",
+  "description": "Claude Code plugins from the enorim namespace",
+  "owner": { "name": "Saul-Mirone", "url": "https://github.com/Saul-Mirone" },
+  "plugins": [
+    {
+      "name": "milkplan",
+      "description": "Review, edit, and annotate Claude Code plans in a Milkdown WYSIWYG editor before approving them",
+      "source": {
+        "source": "npm",
+        "package": "@enorim/milkplan",
+        "version": ">=0.0.2"
+      }
+    }
+  ]
+}
