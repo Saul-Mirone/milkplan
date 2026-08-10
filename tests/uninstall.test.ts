@@ -29,8 +29,8 @@ describe('runUninstall', () => {
   it('cleans the user file and both project files, reporting each one', () => {
     const fake = fakeInitIO({
       files: {
-        [USER_SETTINGS]: installedWith('npx -y milkplan'),
-        [PROJECT_SHARED]: installedWith('npx -y milkplan@0.1.0'),
+        [USER_SETTINGS]: installedWith('npx -y @enorim/milkplan'),
+        [PROJECT_SHARED]: installedWith('npx -y @enorim/milkplan@0.1.0'),
         [PROJECT_LOCAL]: installedWith(CHECKOUT_COMMAND),
       },
     })
@@ -41,7 +41,7 @@ describe('runUninstall', () => {
     ).toEqual([USER_SETTINGS, PROJECT_SHARED, PROJECT_LOCAL])
     for (const path of [USER_SETTINGS, PROJECT_SHARED, PROJECT_LOCAL])
       expect(fake.settingsAt(path)).toEqual({})
-    expect(logged(fake.state, 'npm uninstall -g milkplan')).toBe(true)
+    expect(logged(fake.state, 'npm uninstall -g @enorim/milkplan')).toBe(true)
     // Uninstall leaves the plan history behind; the user must at least be
     // told where it lives.
     expect(logged(fake.state, '~/.claude/milkplan/history/')).toBe(true)
@@ -69,7 +69,7 @@ describe('runUninstall', () => {
           {
             matcher: 'ExitPlanMode',
             hooks: [
-              { type: 'command', command: 'npx -y milkplan' },
+              { type: 'command', command: 'npx -y @enorim/milkplan' },
               { type: 'command', command: 'other-plan-tool' },
             ],
           },
@@ -146,7 +146,7 @@ describe('runUninstall', () => {
 
   it('rejects any argument, since uninstall takes none', () => {
     const fake = fakeInitIO({
-      files: { [USER_SETTINGS]: installedWith('npx -y milkplan') },
+      files: { [USER_SETTINGS]: installedWith('npx -y @enorim/milkplan') },
     })
     runUninstall(['--all'], fake.io)
 

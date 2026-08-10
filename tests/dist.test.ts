@@ -1,11 +1,15 @@
 import { access, constants, readdir, readFile, stat } from 'node:fs/promises'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { VERSION } from '../src/cli/version'
+import { PACKAGE_NAME, VERSION } from '../src/cli/version'
 import { CLI, requireBuiltCli } from './helpers/cli-process'
 import { at } from './helpers/json'
 
 const PACKAGE_JSON = new URL('../package.json', import.meta.url)
+const README = new URL('../README.md', import.meta.url)
+// Deliberately digit-anchored: the README also carries a `@<version>`
+// placeholder in prose, which the sync script leaves alone.
+const PINNED_COMMAND = /@enorim\/milkplan@\d+\.\d+\.\d+(?:-[\w.]+)?/gu
 
 beforeAll(requireBuiltCli)
 
@@ -58,10 +62,14 @@ describe('the published bundle', () => {
     expect(css).toContain('.mp-diff-overlay .milkdown .milkdown-diff-controls')
   })
 
-  it('reports the same version the source constant claims', async () => {
-    // The constant is what --shared pins for a whole team; a stale one would
-    // pin teammates to a version that does not exist yet.
-    const manifest: unknown = JSON.parse(await readFile(PACKAGE_JSON, 'utf8'))
-    expect(VERSION).toBe(at(manifest, 'version'))
+  it('documents the current version in the pinned hook example', async () => {
+    // README shows the exact JSON `init --project --shared` commits for a whole
+    // team, and it is the one copy of the release identity no import can reach
+    // — scripts/sync-readme-pin.mjs moves it, this proves the move happened.
+    const readme = await readFile(README, 'utf8')
+    const pins = new Set<string>()
+    for (const match of readme.matchAll(PINNED_COMMAND)) pins.add(match[0])
+    expect(pins.size).toBeGreaterThan(0)
+    expect([...pins]).toEqual([`${PACKAGE_NAME}@${VERSION}`])
   })
 })

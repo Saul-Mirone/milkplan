@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 
@@ -10,10 +9,9 @@ import {
   settingsRunMilkplan,
   type Settings,
 } from '../src/cli/settings-hooks'
-import { VERSION } from '../src/cli/version'
 import type { DeepReadonly } from '../src/shared/readonly'
 
-const OWN_COMMAND = 'npx -y milkplan@0.1.0'
+const OWN_COMMAND = 'npx -y @enorim/milkplan@0.1.0'
 const CHECKOUT_COMMAND = '"/usr/local/bin/node" "/Users/x/Code/mp/dist/cli.mjs"'
 
 function installed(): Settings {
@@ -124,7 +122,7 @@ describe('removeMilkplanHooks', () => {
           {
             matcher: 'ExitPlanMode',
             hooks: [
-              { type: 'command', command: 'npx -y milkplan' },
+              { type: 'command', command: 'npx -y @enorim/milkplan' },
               { type: 'command', command: 'other-plan-tool' },
             ],
           },
@@ -240,31 +238,16 @@ describe('settingsRunMilkplan', () => {
   })
 })
 
-function packageVersion(): string {
-  const parsed: unknown = JSON.parse(
-    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
-  )
-  if (!isJsonObject(parsed) || typeof parsed['version'] !== 'string')
-    throw new Error('package.json has no version field')
-  return parsed['version']
-}
-
-describe('VERSION', () => {
-  it('matches package.json (a stale constant would pin --shared teams wrong)', () => {
-    expect(VERSION).toBe(packageVersion())
-  })
-})
-
 describe('isMachineSpecific', () => {
   it('accepts the portable npx command', () => {
-    expect(isMachineSpecific('npx -y milkplan@0.1.0')).toBe(false)
-    expect(isMachineSpecific('npx -y milkplan')).toBe(false)
+    expect(isMachineSpecific('npx -y @enorim/milkplan@0.1.0')).toBe(false)
+    expect(isMachineSpecific('npx -y @enorim/milkplan')).toBe(false)
   })
 
   it('accepts URLs (a drive-letter check must not match "s://")', () => {
     expect(
       isMachineSpecific(
-        'npx -y milkplan --registry https://registry.npmjs.org',
+        'npx -y @enorim/milkplan --registry https://registry.npmjs.org',
       ),
     ).toBe(false)
   })

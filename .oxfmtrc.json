@@ -3,5 +3,11 @@
   "semi": false,
   "singleQuote": true,
   "printWidth": 80,
-  "ignorePatterns": ["dist", "node_modules", "fixtures", "pnpm-lock.yaml"]
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    "fixtures",
+    "pnpm-lock.yaml",
+    ".changeset"
+  ]
 }

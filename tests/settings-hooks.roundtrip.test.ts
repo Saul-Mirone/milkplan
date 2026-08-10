@@ -6,7 +6,7 @@ import {
   type Settings,
 } from '../src/cli/settings-hooks'
 
-const OWN_COMMAND = 'npx -y milkplan@0.1.0'
+const OWN_COMMAND = 'npx -y @enorim/milkplan@0.1.0'
 
 function installed(): Settings {
   return addMilkplanHook({}, OWN_COMMAND).settings

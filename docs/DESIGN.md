@@ -409,7 +409,7 @@ into the target settings file:
   file; init ignores the file via `.git/info/exclude` when needed and warns if
   git already tracks it.
 - `--project --shared` → `<cwd>/.claude/settings.json` (committed, team-wide).
-  Only the portable, version-pinned `npx -y milkplan@<version>` command is
+  Only the portable, version-pinned `npx -y @enorim/milkplan@<version>` command is
   allowed here: init refuses to run from a source checkout, and an
   `isMachineSpecific` guard blocks absolute/home/env-dependent commands from
   ever reaching the shared file.
@@ -429,9 +429,9 @@ The merged entry:
 }
 ```
 
-`<cmd>` = `npx -y milkplan` if invoked from an installed package, else the quoted
+`<cmd>` = `npx -y @enorim/milkplan` if invoked from an installed package, else the quoted
 absolute `"<node>" "<path-to-dist/cli.mjs>"`; `--shared` always uses
-`npx -y milkplan@<version>`. Re-running init refreshes a stale milkplan entry in
+`npx -y @enorim/milkplan@<version>`. Re-running init refreshes a stale milkplan entry in
 the target file (remove-then-add; "nothing to do" only when the entry is already
 identical). After a project install, warn when a sibling settings file (or the
 user-level file) also runs milkplan — hooks stack across files. Log the target

@@ -22,11 +22,11 @@ opens the plan in your browser instead of the terminal prompt:
   a read-only inline diff against any earlier submitted round of the same
   session.
 
-![The milkplan review UI: the plan in a WYSIWYG editor with an annotation anchored to selected text](docs/assets/review-ui.png)
+![The milkplan review UI: the plan in a WYSIWYG editor with an annotation anchored to selected text](https://raw.githubusercontent.com/Saul-Mirone/milkplan/HEAD/docs/assets/review-ui.png)
 
 Everything runs locally: an ephemeral HTTP server on `127.0.0.1` with a
 per-review token, one process per review, no daemon. The review itself makes no
-network calls (an `npx -y milkplan` hook command may contact the npm registry on
+network calls (an `npx -y @enorim/milkplan` hook command may contact the npm registry on
 a cold cache).
 
 ## Requirements
@@ -41,7 +41,7 @@ a cold cache).
 ## Install
 
 ```sh
-npm install -g milkplan   # or: use npx below without installing
+npm install -g @enorim/milkplan   # or: use npx below without installing
 milkplan init             # writes the hook into ~/.claude/settings.json
 milkplan test-fire        # verify: your browser opens a sample plan review
 ```
@@ -57,7 +57,7 @@ Per-project installs come in two flavors:
   from your machine. init keeps it out of git for you (via `.git/info/exclude`),
   and warns if it is already tracked.
 - `milkplan init --project --shared` writes a portable, version-pinned
-  `npx -y milkplan@<version>` command into the committed
+  `npx -y @enorim/milkplan@<version>` command into the committed
   `<cwd>/.claude/settings.json` so the whole team gets the hook. It refuses to
   run from a source checkout — a checkout's command only exists on your machine.
   Teammates need `npx` on their PATH, and Claude Code asks them to approve the
@@ -82,7 +82,7 @@ machine-local files):
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y milkplan@0.1.0",
+            "command": "npx -y @enorim/milkplan@0.0.1",
             "timeout": 86400
           }
         ]
@@ -99,10 +99,10 @@ To remove milkplan, clean up the hook entries first, then the package:
 
 ```sh
 milkplan uninstall        # removes hooks from user + current project settings
-npm uninstall -g milkplan
+npm uninstall -g @enorim/milkplan
 ```
 
-(Uninstalling only the package is not enough: a leftover `npx -y milkplan` hook
+(Uninstalling only the package is not enough: a leftover `npx -y @enorim/milkplan` hook
 would silently re-download it from the registry on the next plan approval.)
 
 Uninstalling does not delete review data: the plan text of past rounds stays in
@@ -203,6 +203,32 @@ Two environment variables affect the browser launch:
 - `BROWSER` — the command to launch instead of the platform default. It is taken
   as a bare command and handed the URL as a single argument (no `%s` expansion,
   no colon-separated lists). Honored everywhere except native Windows.
+
+## Releasing
+
+Releases are automated with [Changesets](https://github.com/changesets/changesets).
+
+**In a PR that changes behaviour**, describe the change for users:
+
+```sh
+pnpm changeset
+```
+
+Pick `patch` / `minor` / `major`, write one user-facing sentence, and commit the
+generated `.changeset/*.md` file. For refactors, docs, or CI changes that ship
+nothing user-visible, skip it (or use `pnpm changeset add --empty`). Nothing
+enforces this — a PR without a changeset simply ships in whatever release comes
+next.
+
+**Maintainers:** merging to `main` opens a `chore: version packages` PR that bumps
+`package.json` and the pinned version in this README, and writes `CHANGELOG.md`.
+Merging that PR publishes to npm, pushes the `v*` tag, and cuts the GitHub release.
+npm auth is [trusted publishing](https://docs.npmjs.com/trusted-publishers) over
+OIDC — there is no npm token in this repo, and releases carry provenance.
+
+`package.json` is the only place the version lives: `src/cli/version.ts` imports it,
+and `scripts/sync-readme-pin.mjs` moves the pin above. Never bump either by hand;
+`tests/dist.test.ts` fails if they drift.
 
 ## Compatibility notes
 

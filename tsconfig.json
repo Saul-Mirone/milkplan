@@ -9,10 +9,15 @@
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "isolatedModules": true,
+    "resolveJsonModule": true,
+    // scripts/ is plain Node ESM (.mjs). Without allowJs it stays outside the
+    // TS program, and oxlint's type-aware rules then see every `node:` import
+    // as an `error` type and flood the file with no-unsafe-* findings.
+    "allowJs": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "scripts", "vite.config.ts"]
 }

@@ -44,7 +44,7 @@ describe('hookCommandFor', () => {
     // node cannot execute src/cli/init.ts, and a bundle inside node_modules is
     // reachable portably through npx — getting either branch wrong registers a
     // hook that is dead on arrival.
-    expect(hookCommandFor(SELF_NPM, NODE)).toBe('npx -y milkplan')
+    expect(hookCommandFor(SELF_NPM, NODE)).toBe('npx -y @enorim/milkplan')
     expect(hookCommandFor(SELF_DIST, NODE)).toBe(`"${NODE}" "${SELF_DIST}"`)
     expect(hookCommandFor(SELF_CHECKOUT, NODE)).toBe(CHECKOUT_COMMAND)
   })
@@ -92,7 +92,7 @@ describe('runInit', () => {
 
     expect(fake.onlyWrite().path).toBe(PROJECT_SHARED)
     const command = commandIn(fake.settingsAt(PROJECT_SHARED))
-    expect(command).toBe(`npx -y milkplan@${VERSION}`)
+    expect(command).toBe(`npx -y @enorim/milkplan@${VERSION}`)
     expect(isMachineSpecific(String(command))).toBe(false)
     // A shared install is not machine-local, so nothing should be excluded.
     expect(fake.state.gitCalls).toEqual([])
@@ -110,7 +110,7 @@ describe('runInit', () => {
     expect(fake.state.failed).toBe(true)
     expect(logged(fake.state, 'source checkout')).toBe(true)
     // The remedy line is the user's only route forward.
-    expect(logged(fake.state, 'npm install -g milkplan')).toBe(true)
+    expect(logged(fake.state, 'npm install -g @enorim/milkplan')).toBe(true)
   })
 
   it('rejects --shared without --project, and any unknown option, writing nothing', () => {
@@ -269,7 +269,9 @@ describe('runInit', () => {
             PermissionRequest: [
               {
                 matcher: 'ExitPlanMode',
-                hooks: [{ type: 'command', command: 'npx -y milkplan' }],
+                hooks: [
+                  { type: 'command', command: 'npx -y @enorim/milkplan' },
+                ],
               },
             ],
           },

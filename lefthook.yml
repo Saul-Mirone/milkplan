@@ -8,5 +8,8 @@ pre-commit:
     oxfmt:
       priority: 2
       glob: '*.{ts,tsx,mts,cts,mjs,cjs,js,jsx,json,jsonc,md,mdx,yml,yaml,css}'
-      run: pnpm exec oxfmt {staged_files}
+      # --no-error-on-unmatched-pattern: .changeset/ is ignored by .oxfmtrc.json
+      # (oxfmt would rewrite changeset frontmatter), and lefthook passes staged
+      # files explicitly — without this, a changeset-only commit fails here.
+      run: pnpm exec oxfmt --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true

@@ -8,6 +8,7 @@ import {
 } from './init'
 import { realInitIO, type InitIO } from './init-io'
 import { removeMilkplanHooks } from './settings-hooks'
+import { PACKAGE_NAME } from './version'
 import type { DeepReadonly } from '../shared/readonly'
 
 function reportOutcome(
@@ -18,7 +19,7 @@ function reportOutcome(
 ): void {
   if (total > 0) {
     io.log(
-      'the npm package itself is untouched — remove it with: npm uninstall -g milkplan',
+      `the npm package itself is untouched — remove it with: npm uninstall -g ${PACKAGE_NAME}`,
     )
     // Never deleted automatically: destroying user data a reinstall might want
     // is not this command's call to make.

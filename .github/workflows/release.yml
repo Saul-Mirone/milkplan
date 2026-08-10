@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Two pushes to main must not race for the same tag / npm version. Cancelling a
+# half-finished publish is worse than queueing.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the version branch, tags, and GitHub releases
+      pull-requests: write # open/update the Version Packages PR
+      id-token: write # mint the OIDC token npm trusted publishing needs
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # changelog-github walks history to map each changeset to its commit
+          # and PR; a shallow clone silently produces link-less changelogs.
+          fetch-depth: 0
+      - run: corepack enable
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      # `pnpm publish` shells out to the npm CLI for the upload, and OIDC
+      # trusted publishing needs npm >= 11.5.1. `corepack enable` with no args
+      # shims only pnpm/yarn, never npm, so this cannot conflict.
+      - run: npm install -g npm@latest
+      - run: pnpm install --frozen-lockfile
+      # Pinned to the v1.9.0 commit: this step runs with contents: write and an
+      # OIDC token, so a moving tag is a supply-chain hole.
+      - uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: pnpm run release:version
+          # Also the only gate on the merged Version PR: changesets/action
+          # pushes it with GITHUB_TOKEN, so ci.yml never runs on it, and `check`
+          # is what builds the gitignored dist/ this package publishes.
+          publish: pnpm run release:publish
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          # No NODE_AUTH_TOKEN / NPM_TOKEN: npm trusted publishing mints
+          # credentials from the OIDC token and attaches provenance itself.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

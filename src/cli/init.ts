@@ -9,7 +9,7 @@ import {
   settingsRunMilkplan,
   type Settings,
 } from './settings-hooks'
-import { VERSION } from './version'
+import { PACKAGE_NAME, VERSION } from './version'
 import type { DeepReadonly } from '../shared/readonly'
 
 export const LOCAL_FILE = 'settings.local.json'
@@ -31,7 +31,7 @@ function isNpmInstall(selfPath: string): boolean {
  * approval fail silently.
  */
 export function hookCommandFor(selfPath: string, nodePath: string): string {
-  if (isNpmInstall(selfPath)) return 'npx -y milkplan'
+  if (isNpmInstall(selfPath)) return `npx -y ${PACKAGE_NAME}`
   const parts = selfPath.split(sep)
   if (parts[parts.length - 2] === 'dist') return `"${nodePath}" "${selfPath}"`
   // Running from sources (src/cli/*): point at the build output.
@@ -50,13 +50,13 @@ function resolveSharedCommand(io: DeepReadonly<InitIO>): string | null {
       "a shared hook runs on every teammate's machine, but this milkplan runs from a source checkout — its command would embed paths that only exist here.",
     )
     io.log(
-      'install from npm first (npm install -g milkplan), or drop --shared for a machine-local hook in settings.local.json.',
+      `install from npm first (npm install -g ${PACKAGE_NAME}), or drop --shared for a machine-local hook in settings.local.json.`,
     )
     io.fail()
     return null
   }
   // Pin the version: a committed hook must not drift under teammates.
-  return `npx -y milkplan@${VERSION}`
+  return `npx -y ${PACKAGE_NAME}@${VERSION}`
 }
 
 export function loadSettings(

@@ -1,15 +1,38 @@
 {
-  "name": "milkplan",
-  "version": "0.1.0",
+  "name": "@enorim/milkplan",
+  "version": "0.0.1",
   "description": "Review, edit, and annotate Claude Code plans in a Milkdown WYSIWYG editor before approving them",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "cli",
+    "hook",
+    "milkdown",
+    "permission-request",
+    "plan",
+    "wysiwyg"
+  ],
+  "homepage": "https://github.com/Saul-Mirone/milkplan#readme",
+  "bugs": {
+    "url": "https://github.com/Saul-Mirone/milkplan/issues"
+  },
   "license": "MIT",
+  "author": "Saul-Mirone",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Saul-Mirone/milkplan.git"
+  },
   "bin": {
     "milkplan": "dist/cli.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "CHANGELOG.md"
   ],
   "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build && tsdown",
@@ -21,9 +44,14 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run build && pnpm run test",
+    "changeset": "changeset",
+    "release:version": "changeset version && node scripts/sync-readme-pin.mjs && oxfmt README.md CHANGELOG.md",
+    "release:publish": "pnpm run check && changeset publish",
     "prepare": "lefthook install"
   },
   "devDependencies": {
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.1",
     "@milkdown/crepe": "^7.22.0",
     "@milkdown/kit": "^7.22.0",
     "@milkdown/plugin-highlight": "^7.22.0",
