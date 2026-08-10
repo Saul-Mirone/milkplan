@@ -128,7 +128,7 @@ machine-local files):
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @enorim/milkplan@0.0.1",
+            "command": "npx -y @enorim/milkplan@0.0.2",
             "timeout": 86400
           }
         ]
