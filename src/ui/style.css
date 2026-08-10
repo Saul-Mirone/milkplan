@@ -2,12 +2,134 @@
 @import '@milkdown/crepe/theme/nord.css';
 @import '@milkdown/crepe/theme/nord-dark.css' (prefers-color-scheme: dark);
 
+/* ---- fonts ------------------------------------------------------------- */
+
+/* The nord theme names Rubik/Inter/JetBrains Mono but ships none of them, so
+   without these faces headings fall back to Times and body text to Arial. The
+   latin + latin-ext subsets are declared by hand rather than importing
+   @fontsource-variable/*.css, which would emit every subset (cyrillic, greek,
+   vietnamese — ~2.4MB) into dist. CJK has no subset in any of these families
+   and is handled by --mp-font-cjk below. */
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-wght-italic.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/inter/files/inter-latin-ext-wght-italic.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Rubik Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 900;
+  src: url('@fontsource-variable/rubik/files/rubik-latin-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Rubik Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 900;
+  src: url('@fontsource-variable/rubik/files/rubik-latin-ext-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
+    U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-ext-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
+    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   color-scheme: light dark;
+  /* Neither Inter/Rubik/JetBrains Mono nor the system UI faces cover CJK, so
+     every stack below routes those codepoints here. system-ui leads because on
+     macOS and Windows it resolves to the locale-correct face (PingFang SC for
+     zh, Hiragino Sans for ja) instead of forcing one language's glyph shapes on
+     the other; the named entries only matter where it doesn't. */
+  --mp-font-cjk:
+    system-ui, 'PingFang SC', 'Hiragino Sans', 'Microsoft YaHei',
+    'Noto Sans CJK SC', 'Source Han Sans SC';
   --mp-font-ui:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
-    Arial, sans-serif;
-  --mp-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    Arial, var(--mp-font-cjk), sans-serif;
+  --mp-font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, var(--mp-font-cjk), monospace;
   --mp-bg: #ffffff;
   --mp-fg: #1c1b22;
   --mp-muted: #6b6a72;
@@ -28,6 +150,20 @@
     --mp-accent: #8f8ff0;
     --mp-accent-fg: #17161b;
   }
+}
+
+/* Same stacks nord declares, with the now-loaded variable faces in front and
+   the CJK stack spliced in ahead of the generic fallbacks. Titles take the CJK
+   sans rather than nord's serif tail, since Rubik is itself a sans. */
+.milkdown {
+  --crepe-font-title:
+    'Rubik Variable', Rubik, var(--mp-font-cjk), Cambria, 'Times New Roman',
+    Times, serif;
+  --crepe-font-default:
+    'Inter Variable', Inter, Arial, Helvetica, var(--mp-font-cjk), sans-serif;
+  --crepe-font-code:
+    'JetBrains Mono Variable', 'JetBrains Mono', Menlo, Monaco, 'Courier New',
+    Courier, var(--mp-font-cjk), monospace;
 }
 
 * {
@@ -375,7 +511,7 @@ body {
 }
 
 .mp-editor-column .milkdown pre code {
-  font-family: var(--mp-font-mono);
+  font-family: var(--crepe-font-code);
   background: none;
   padding: 0;
 }
