@@ -26,19 +26,58 @@ opens the plan in your browser instead of the terminal prompt:
 
 Everything runs locally: an ephemeral HTTP server on `127.0.0.1` with a
 per-review token, one process per review, no daemon. The review itself makes no
-network calls (an `npx -y @enorim/milkplan` hook command may contact the npm registry on
-a cold cache).
+network calls. As a plugin it is downloaded once and every review after that
+runs a local `node`; only the legacy `npx -y @enorim/milkplan` hook command can
+reach the npm registry, and only on a cold cache.
 
 ## Requirements
 
 - Node.js ≥ 20
 - Claude Code with the `PermissionRequest` hook event (verified on v2.1.221;
   the stricter approval envelope required since v2.1.199 is handled
-  automatically)
+  automatically). Installing as a plugin additionally needs marketplace support
+  with an `npm` plugin source — both present in v2.1.220
 - An interactive session — headless `claude -p` never reaches plan approval
   (see Compatibility notes)
 
 ## Install
+
+From inside a Claude Code session:
+
+```
+/plugin marketplace add Saul-Mirone/milkplan
+/plugin install milkplan@enorim
+```
+
+Restart Claude Code. The next time a plan needs approval, your browser opens
+with the review UI.
+
+For a whole team, commit this to `<repo>/.claude/settings.json` instead — every
+teammate picks it up on their next session:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "enorim": {
+      "source": { "source": "github", "repo": "Saul-Mirone/milkplan" }
+    }
+  },
+  "enabledPlugins": { "milkplan@enorim": true }
+}
+```
+
+The plugin id is `milkplan@enorim` — `plugin-name@marketplace-name`, the reverse
+of the npm scope order in `@enorim/milkplan`. The marketplace is named after the
+namespace rather than this one product, so it has room for the next one.
+
+To remove it: `/plugin uninstall milkplan@enorim`.
+
+### Without the plugin system
+
+milkplan is also a plain npm package that writes the hook into a settings file
+itself. Use it if you want `milkplan` as a real terminal command — a plugin's
+executables reach only Claude Code's own Bash tool, not your shell — or if your
+Claude Code predates plugin marketplaces.
 
 ```sh
 npm install -g @enorim/milkplan   # or: use npx below without installing
@@ -49,6 +88,12 @@ milkplan test-fire        # verify: your browser opens a sample plan review
 `test-fire` exercises the full pipeline without a Claude Code session — if the
 browser opens and deciding prints a JSON line to the terminal, the install
 works.
+
+> **Pick one.** Hooks stack across every source Claude Code reads, and the
+> plugin and `init` register the same hook independently — running both opens
+> **two** browser windows on every plan approval. Migrating to the plugin? Run
+> `milkplan uninstall` first; it is the only thing that removes an entry `init`
+> wrote.
 
 Per-project installs come in two flavors:
 
@@ -61,7 +106,8 @@ Per-project installs come in two flavors:
   `<cwd>/.claude/settings.json` so the whole team gets the hook. It refuses to
   run from a source checkout — a checkout's command only exists on your machine.
   Teammates need `npx` on their PATH, and Claude Code asks them to approve the
-  project hook before it first runs.
+  project hook before it first runs. The `enabledPlugins` block above does the
+  same job without the `npx` requirement or the version pin to keep current.
 
 Re-running `init` is safe: it refreshes a stale milkplan entry in the target
 file (old node paths after a version-manager upgrade, an outdated `--shared`
@@ -92,10 +138,10 @@ machine-local files):
 }
 ```
 
-Restart Claude Code after installing. The next time a plan needs approval, your
-browser opens with the review UI.
+Restart Claude Code after `init` too — hooks are read at startup.
 
-To remove milkplan, clean up the hook entries first, then the package:
+To remove an `init`-written milkplan, clean up the hook entries first, then the
+package:
 
 ```sh
 milkplan uninstall        # removes hooks from user + current project settings
@@ -159,12 +205,15 @@ is what powers the "View changes" diff:
 Every hook invocation appends to `~/.claude/milkplan.log` — that file is the
 first place to look.
 
-- **Nothing popped up.** Restart Claude Code after `milkplan init` (hooks are
-  read at startup), then check the log. If the hook fired, the log contains
+- **Nothing popped up.** Restart Claude Code after installing (hooks are read at
+  startup), then check the log. If the hook fired, the log contains
   `review UI at http://127.0.0.1:<port>/#token=…` — open that URL manually. If
-  the log has no entry at all, the hook never ran: confirm the entry exists in
-  your settings file and that your Claude Code version has `PermissionRequest`
-  hooks.
+  the log has no entry at all, the hook never ran: confirm your Claude Code
+  version has `PermissionRequest` hooks, then that the hook is registered —
+  `/plugin` should list milkplan as enabled, or the entry should be in the
+  settings file `init` reported.
+- **Two browser windows per plan.** The plugin and an `init`-written hook are
+  both installed. Run `milkplan uninstall` to drop the settings entry.
 - **It stopped working after a Node upgrade.** Source-checkout installs pin the
   absolute path of the node binary; when a version manager (fnm/nvm) deletes
   that version, the hook dies silently. Re-run `milkplan init` — it refreshes
@@ -221,14 +270,25 @@ enforces this — a PR without a changeset simply ships in whatever release come
 next.
 
 **Maintainers:** merging to `main` opens a `chore: version packages` PR that bumps
-`package.json` and the pinned version in this README, and writes `CHANGELOG.md`.
-Merging that PR publishes to npm, pushes the `v*` tag, and cuts the GitHub release.
-npm auth is [trusted publishing](https://docs.npmjs.com/trusted-publishers) over
-OIDC — there is no npm token in this repo, and releases carry provenance.
+`package.json`, the pinned version in this README, and `.claude-plugin/plugin.json`,
+and writes `CHANGELOG.md`. Merging that PR publishes to npm, pushes the `v*` tag, and
+cuts the GitHub release. npm auth is
+[trusted publishing](https://docs.npmjs.com/trusted-publishers) over OIDC — there is
+no npm token in this repo, and releases carry provenance.
 
 `package.json` is the only place the version lives: `src/cli/version.ts` imports it,
-and `scripts/sync-readme-pin.mjs` moves the pin above. Never bump either by hand;
-`tests/dist.test.ts` fails if they drift.
+and `scripts/sync-version.mjs` moves the two copies no import can reach — the pin
+above and the plugin manifest. Never bump any of them by hand; `tests/dist.test.ts`
+fails if they drift.
+
+The plugin manifest's version is not cosmetic. Claude Code resolves an `npm`-sourced
+plugin's version from `plugin.json` alone — there is no commit SHA to fall back to, and
+the fallback for that source is the constant `unknown` — so a manifest stuck at an old
+version means `/plugin update` never offers the new one.
+
+The marketplace entry publishes to the same npm package, so nothing about a release
+touches `.claude-plugin/marketplace.json`: its `>=` floor is there to exclude the
+releases published before the plugin manifests existed.
 
 ## Compatibility notes
 

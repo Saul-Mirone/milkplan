@@ -27,7 +27,9 @@
   },
   "files": [
     "dist",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "hooks",
+    ".claude-plugin/plugin.json"
   ],
   "type": "module",
   "publishConfig": {
@@ -45,7 +47,7 @@
     "format:check": "oxfmt --check",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run build && pnpm run test",
     "changeset": "changeset",
-    "release:version": "changeset version && node scripts/sync-readme-pin.mjs && oxfmt README.md CHANGELOG.md",
+    "release:version": "changeset version && node scripts/sync-version.mjs && oxfmt README.md CHANGELOG.md .claude-plugin/plugin.json",
     "release:publish": "pnpm run check && changeset publish",
     "prepare": "lefthook install"
   },

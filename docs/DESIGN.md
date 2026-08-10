@@ -398,6 +398,41 @@ which is why `explorer.exe` is not in the chain at all. Launchers still run
 Every candidate must carry the URL's `#token=` fragment verbatim; the UI falls
 back to `DEV_TOKEN` without it, which yields a page that loads and then 403s.
 
+### Distribution (`.claude-plugin/`, `hooks/`)
+
+Two ways in, one `npm publish` behind both.
+
+**As a Claude Code plugin.** `.claude-plugin/plugin.json` is the manifest;
+`hooks/hooks.json` registers the same `PermissionRequest` / `ExitPlanMode` /
+`timeout: 86400` entry `init` writes, with the command
+`node "${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs"`. `${CLAUDE_PLUGIN_ROOT}` is quoted
+because the install path carries a version segment; the invocation goes through
+`node` rather than the shebang because the executable bit is not guaranteed to
+survive `npm install` → plugin-cache copy. `package.json` `files` names
+`.claude-plugin/plugin.json` explicitly — npm drops dot-prefixed entries
+otherwise, and a marketplace `npm` source resolves the plugin from the tarball
+alone.
+
+`.claude-plugin/marketplace.json` catalogs it as `milkplan@enorim`
+(`plugin-name@marketplace-name`, the reverse of npm's scope order). The source
+is `npm`, not `github`, for one hard reason: **`dist/` is gitignored**, so a
+`github` source would clone a repo with no build output. The npm tarball has
+`dist/` because `release:publish` runs `pnpm run check` before
+`changeset publish`. Sourcing from npm also keeps 486 shiki grammar chunks out
+of git history on every release.
+
+The entry's `version` is a `>=` floor, not a caret: it exists to exclude the
+releases published before these manifests did, and `^0.0.2` would resolve to
+`>=0.0.2 <0.0.3` and pin every user to one release forever. No `version` on the
+entry itself — `plugin.json`'s always wins, and setting both lets a stale
+manifest mask it.
+
+**As an npm package.** What `src/cli/init.ts` below does. Kept because a
+plugin's `bin/` reaches only the Bash tool's PATH, so this is what makes
+`milkplan test-fire` a real terminal command. The two register the same hook
+independently and Claude Code stacks hooks across sources, so running both opens
+two reviews per approval — `milkplan uninstall` is the migration step.
+
 ### `src/cli/init.ts`
 
 `milkplan init [--project [--shared]]` — idempotently merge the hook entry
