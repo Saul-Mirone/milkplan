@@ -24,11 +24,18 @@ opens the plan in your browser instead of the terminal prompt:
 
 ![The milkplan review UI: the plan in a WYSIWYG editor with an annotation anchored to selected text](https://raw.githubusercontent.com/Saul-Mirone/milkplan/HEAD/docs/assets/review-ui.png)
 
+The same review with "View changes" open — removals struck through, additions
+highlighted, inline rather than side-by-side:
+
+![The View changes overlay: the current plan diffed against round 1, showing a renamed heading and two replaced bullets](https://raw.githubusercontent.com/Saul-Mirone/milkplan/HEAD/docs/assets/diff-overlay.png)
+
 Everything runs locally: an ephemeral HTTP server on `127.0.0.1` with a
 per-review token, one process per review, no daemon. The review itself makes no
-network calls. As a plugin it is downloaded once and every review after that
-runs a local `node`; only the legacy `npx -y @enorim/milkplan` hook command can
-reach the npm registry, and only on a cold cache.
+network calls — the editor's fonts are bundled into the build rather than
+fetched from a CDN, so the UI renders the same offline. As a plugin it is
+downloaded once and every review after that runs a local `node`; only the legacy
+`npx -y @enorim/milkplan` hook command can reach the npm registry, and only on a
+cold cache.
 
 ## Requirements
 
