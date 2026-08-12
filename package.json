@@ -1,6 +1,6 @@
 {
   "name": "@enorim/milkplan",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Review, edit, and annotate Claude Code plans in a Milkdown WYSIWYG editor before approving them",
   "keywords": [
     "claude",
