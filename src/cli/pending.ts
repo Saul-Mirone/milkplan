@@ -206,8 +206,6 @@ function pruneUnusable(
     const path = join(dir, name)
     const entry = parseEntry(io.readFile(path))
     if (entry !== null && entry.pid === keepPid) continue
-    // Publishing is atomic, so a file at a <pid>.json path is never a
-    // half-written one: unparseable here means genuinely corrupt.
     if (entry === null || !PENDING_URL_PATTERN.test(entry.url)) {
       io.removeFile(path)
       continue
@@ -265,7 +263,8 @@ export function removePending(pid: number, io: DeepReadonly<PendingIO>): void {
   try {
     io.removeFile(pendingFileFor(io.homedir(), pid))
   } catch {
-    // A leftover entry is pruned by age, and by the probe before that.
+    // A leftover is cleared by the next `milkplan open` (its probe finds
+    // nothing serving) or the next registration (which sees this pid gone).
   }
 }
 

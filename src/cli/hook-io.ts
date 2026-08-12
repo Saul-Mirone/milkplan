@@ -97,8 +97,10 @@ export const realHookIO: HookIO = {
     process.on('SIGTERM', handler)
     // SIGHUP is the one this feature made load-bearing: closing the terminal
     // that runs a backgrounded Claude Code sends it, and Node's default for an
-    // unhandled SIGHUP terminates without running 'exit' handlers — which
-    // would strand the pending entry, token and all, until the age backstop.
+    // unhandled SIGHUP terminates without running 'exit' handlers — which would
+    // strand the pending entry, token and all, until something else proved it
+    // dead (a `milkplan open` probe, or the next registration finding the pid
+    // gone). Handling it keeps the common case exact instead of eventual.
     process.on('SIGHUP', handler)
   },
 }
