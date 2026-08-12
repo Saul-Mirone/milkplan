@@ -57,6 +57,9 @@ export function runCli(
       HOME: home,
       USERPROFILE: home,
       MILKPLAN_NO_BROWSER: '1',
+      // Belt and braces against a developer's exported MILKPLAN_OPEN, which
+      // process.env would otherwise leak in. NO_BROWSER already wins.
+      MILKPLAN_OPEN: 'manual',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   })

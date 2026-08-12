@@ -6,6 +6,7 @@ import {
   type ServerResponse,
 } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   APPROVAL_PERMISSION_MODES,
@@ -238,9 +239,14 @@ async function serveStatic(
   }
 }
 
+/** The built UI, which tsdown/vite place next to dist/cli.mjs. */
+export function bundledUiDir(): string {
+  return fileURLToPath(new URL('./ui', import.meta.url))
+}
+
 export function startReviewServer(
   session: DeepReadonly<ReviewSession>,
-  uiDir: string,
+  uiDir: string = bundledUiDir(),
 ): Promise<RunningServer> {
   return new Promise((resolvePromise, reject) => {
     const server = createServer(

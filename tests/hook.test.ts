@@ -93,7 +93,9 @@ describe('runHook — fail-open paths', () => {
     expect(fake.state.serverStarts).toBe(0)
     expect(fake.state.launches).toEqual([])
     // The log line is the user's only pointer back to a review here.
-    expect(fake.state.logs.join('\n')).toContain('MILKPLAN_NO_BROWSER=1')
+    const logs = fake.state.logs.join('\n')
+    expect(logs).toContain('MILKPLAN_OPEN=manual')
+    expect(logs).toContain('milkplan open --print')
   })
 
   it('passes through when the review server cannot start', async () => {
@@ -125,7 +127,9 @@ describe('runHook — happy path', () => {
   it('keeps serving when the browser is suppressed rather than passing through', async () => {
     // MILKPLAN_NO_BROWSER means "serve and wait for a manual visit" — the
     // escape hatch ssh -L users and the e2e suite both rely on.
-    const fake = fakeHookIO({ support: { kind: 'suppressed' } })
+    const fake = fakeHookIO({
+      support: { kind: 'suppressed', reason: 'MILKPLAN_OPEN=manual' },
+    })
     await runHook(VALID, fake.io)
 
     expect(fake.state.serverStarts).toBe(1)

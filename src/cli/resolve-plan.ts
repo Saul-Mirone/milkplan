@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 
 import type { HookPayload, ResolvedPlan } from '../shared/protocol'
@@ -8,6 +10,18 @@ export interface ResolveIO {
   /** Returns null on any read error. */
   readFile(path: string): string | null
   homedir(): string
+}
+
+/** The real filesystem, kept beside its interface the way realLaunchIO is. */
+export const realResolveIO: ResolveIO = {
+  readFile(path) {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return null
+    }
+  },
+  homedir,
 }
 
 function expandHome(filePath: string, home: string): string {

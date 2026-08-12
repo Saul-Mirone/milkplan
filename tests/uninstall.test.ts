@@ -42,9 +42,11 @@ describe('runUninstall', () => {
     for (const path of [USER_SETTINGS, PROJECT_SHARED, PROJECT_LOCAL])
       expect(fake.settingsAt(path)).toEqual({})
     expect(logged(fake.state, 'npm uninstall -g @enorim/milkplan')).toBe(true)
-    // Uninstall leaves the plan history behind; the user must at least be
-    // told where it lives.
-    expect(logged(fake.state, '~/.claude/milkplan/history/')).toBe(true)
+    // Uninstall leaves the review data behind; the user must at least be told
+    // where it lives — both the plan history and the pending registry.
+    expect(logged(fake.state, '~/.claude/milkplan/')).toBe(true)
+    expect(logged(fake.state, 'history/')).toBe(true)
+    expect(logged(fake.state, 'pending/')).toBe(true)
   })
 
   it('removes a checkout hook whose path never mentions milkplan', () => {
