@@ -2,6 +2,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -33,10 +34,18 @@ export interface PendingIO {
   mkdir(path: string): void
   /** Owner-only on creation; throws on failure. */
   writeFile(path: string, content: string): void
+  /** Atomic within the directory; throws on failure. */
+  rename(from: string, to: string): void
   /** Returns null when the directory is missing or unreadable. */
   listDir(path: string): string[] | null
   /** Best-effort: swallows every error. */
   removeFile(path: string): void
+  /**
+   * False only when the process is provably gone. One-directional by design:
+   * a reused pid may report alive, which costs a corpse the probe will clear,
+   * but a live review is never reported dead.
+   */
+  isProcessAlive(pid: number): boolean
   homedir(): string
   now(): number
   /** Never throws. */
@@ -67,11 +76,30 @@ export const realPendingIO: PendingIO = {
   writeFile(path, content) {
     writeFileSync(path, content, { mode: 0o600 })
   },
+  rename(from, to) {
+    renameSync(from, to)
+  },
   listDir(path) {
     try {
       return readdirSync(path)
     } catch {
       return null
+    }
+  },
+  isProcessAlive(pid) {
+    try {
+      // Signal 0 runs every permission check but delivers nothing.
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      // ESRCH is the only proof of death. EPERM means it exists and belongs to
+      // someone else, which for this purpose is alive.
+      return !(
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'ESRCH'
+      )
     }
   },
   removeFile(path) {
@@ -85,16 +113,6 @@ export const realPendingIO: PendingIO = {
   now: () => Date.now(),
   log: debugLog,
 }
-
-/**
- * Entries this old are dropped without asking the network.
- *
- * A litter backstop, not a liveness proof: the hook timeout that actually
- * bounds a review lives in user-editable settings, so no age can prove a
- * review is dead. Liveness is what `probeReview` says — this only keeps a
- * machine that lost power from accumulating files forever.
- */
-export const PENDING_STALE_AFTER_MS = 48 * 60 * 60 * 1000
 
 /**
  * The one URL shape startReviewServer generates. Anything else is refused
@@ -148,7 +166,8 @@ function parseEntry(raw: string | null): PendingEntry | null {
   try {
     value = JSON.parse(raw)
   } catch {
-    // writeFile is not atomic; a torn file costs only itself.
+    // Publishing is atomic, so this is genuine corruption rather than a write
+    // in flight — and it costs only its own entry either way.
     return null
   }
   if (!isPendingEntry(value)) return null
@@ -163,28 +182,37 @@ function parseEntry(raw: string | null): PendingEntry | null {
 }
 
 /**
- * Drops entry files that are unreadable, malformed, refused by the URL pattern
- * or older than PENDING_STALE_AFTER_MS. Never touches `keepPid`, whose file the
- * caller has just written (or is about to).
+ * Drops sibling entries that cannot be a live review. Never touches `keepPid`,
+ * whose file the caller has just written.
+ *
+ * Deliberately not age-based. The hook timeout that actually bounds a review
+ * lives in user-editable settings, so *no* age proves one is dead — a manual
+ * review left waiting under a raised timeout would be deleted out from under
+ * the user, destroying their only way to find it. Only two things are proof:
+ * the process is gone, or the file could never have been openable anyway
+ * (`listPending` skips those, so removing one costs no discoverability).
+ *
+ * Everything else is left for `probeReview` on the read path, which can afford
+ * a network round trip; this runs in front of a review and cannot.
  */
 function pruneUnusable(
   dir: string,
   entries: readonly string[],
-  keepPid: number | null,
+  keepPid: number,
   io: DeepReadonly<PendingIO>,
 ): void {
-  const now = io.now()
   for (const name of entries) {
     if (!PENDING_FILE_PATTERN.test(name)) continue
     const path = join(dir, name)
     const entry = parseEntry(io.readFile(path))
     if (entry !== null && entry.pid === keepPid) continue
-    if (
-      entry === null ||
-      !PENDING_URL_PATTERN.test(entry.url) ||
-      now - entry.startedAt > PENDING_STALE_AFTER_MS
-    )
+    // Publishing is atomic, so a file at a <pid>.json path is never a
+    // half-written one: unparseable here means genuinely corrupt.
+    if (entry === null || !PENDING_URL_PATTERN.test(entry.url)) {
       io.removeFile(path)
+      continue
+    }
+    if (!io.isProcessAlive(entry.pid)) io.removeFile(path)
   }
 }
 
@@ -209,11 +237,20 @@ export function writePending(
       startedAt: io.now(),
     }
     io.mkdir(dir)
-    io.writeFile(pendingFileFor(home, pid), `${JSON.stringify(entry)}\n`)
+    // Published by rename, which is atomic within the directory. Writing
+    // straight to the final path would leave a window where the file is
+    // truncated but not yet written, and a concurrently registering hook that
+    // read it there would classify a live review as corrupt and unlink it —
+    // the writer would then finish into an unlinked inode and vanish from
+    // `milkplan open`. It also keeps `listPending` from ever missing a review
+    // mid-write. The .tmp suffix is outside PENDING_FILE_PATTERN, so a reader
+    // racing the write skips it rather than parsing a partial file.
+    const finalPath = pendingFileFor(home, pid)
+    io.writeFile(`${finalPath}.tmp`, `${JSON.stringify(entry)}\n`)
+    io.rename(`${finalPath}.tmp`, finalPath)
     // Pruning on every write, like history's pruneStale: a user who never runs
     // `milkplan open` would otherwise accumulate one token-bearing file per
-    // unclean death forever. Age only — a 500ms probe budget does not belong
-    // on the hook's path in front of a review.
+    // unclean death forever.
     const listed = io.listDir(dir)
     if (listed !== null) pruneUnusable(dir, listed, pid, io)
   } catch {

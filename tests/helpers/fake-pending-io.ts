@@ -14,6 +14,7 @@ export interface Written {
 export interface FakePendingState {
   writes: Written[]
   mkdirs: string[]
+  renames: { from: string; to: string }[]
   removed: string[]
   logs: string[]
 }
@@ -29,6 +30,8 @@ export interface FakePendingOptions {
   writeFails?: boolean
   /** Return null from listDir, as an unreadable directory would. */
   listDirFails?: boolean
+  /** Pids to report as gone; anything else is alive. */
+  deadPids?: number[]
 }
 
 export interface FakePending {
@@ -48,13 +51,24 @@ export function fakePendingIO(
   const state: FakePendingState = {
     writes: [],
     mkdirs: [],
+    renames: [],
     removed: [],
     logs: [],
   }
   const files = new Map(Object.entries(options.files ?? {}))
-  const home = options.home ?? HOME
+  return { io: buildIO(state, files, options), state, files }
+}
 
-  const io: PendingIO = {
+function buildIO(
+  // The fake's own mutable recording state.
+  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
+  state: FakePendingState,
+  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types
+  files: Map<string, string>,
+  options: DeepReadonly<FakePendingOptions>,
+): PendingIO {
+  const home = options.home ?? HOME
+  return {
     readFile: (path) => files.get(path) ?? null,
     mkdir(path) {
       if (options.mkdirFails === true) throw new Error('EROFS')
@@ -64,6 +78,13 @@ export function fakePendingIO(
       if (options.writeFails === true) throw new Error('ENOSPC')
       state.writes.push({ path, content })
       files.set(path, content)
+    },
+    rename(from, to) {
+      state.renames.push({ from, to })
+      const content = files.get(from)
+      if (content === undefined) throw new Error(`ENOENT: ${from}`)
+      files.delete(from)
+      files.set(to, content)
     },
     listDir(path) {
       if (options.listDirFails === true) return null
@@ -77,12 +98,11 @@ export function fakePendingIO(
       state.removed.push(path)
       files.delete(path)
     },
+    isProcessAlive: (pid) => !(options.deadPids ?? []).includes(pid),
     homedir: () => home,
     now: () => options.now ?? FAKE_NOW,
     log(message) {
       state.logs.push(message)
     },
   }
-
-  return { io, state, files }
 }

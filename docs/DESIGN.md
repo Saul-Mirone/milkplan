@@ -442,7 +442,7 @@ The registry `milkplan open` reads, mirroring `history.ts` (injected sync-fs
 `PendingIO`, total, fail-open):
 
 ```ts
-writePending(input, pid, io): void       // + age-prunes siblings, never its own pid
+writePending(input, pid, io): void       // atomic publish + prunes siblings, never its own pid
 removePending(pid, io): void
 listPending(io): PendingEntry[]          // parsed + pattern-valid, newest first, UNPROBED
 probeReview(entry, fetchFn: ProbeFetch): Promise<'live' | 'dead' | 'indeterminate'>
@@ -458,10 +458,24 @@ launcher. Directory `0o700`, file `0o600` — unlike a history file, a pending e
 holds a **capability**: the URL carries the token that approves the plan. (POSIX
 only, and at creation time only.)
 
-Pruning on write is age-only (`PENDING_STALE_AFTER_MS`, 48h) because a 500 ms probe
-budget does not belong in front of a review. That age is a **litter backstop, not a
-liveness proof** — the hook timeout that actually bounds a review lives in
-user-editable settings, so no age can prove a review is dead.
+Entries are **published by rename**, not written in place: writing straight to the
+final path leaves a truncated-but-unwritten window, and a concurrently registering
+hook that read a live review's file there would judge it corrupt and unlink it — the
+writer would then finish into an unlinked inode and vanish from `milkplan open`. The
+`.tmp` name is outside `PENDING_FILE_PATTERN`, so a racing reader skips it.
+
+Pruning on write is deliberately **not age-based**. The hook timeout that actually
+bounds a review lives in user-editable settings, so no age proves a review dead, and
+deleting a review the user deliberately left waiting would destroy their only way to
+find it. Write-side pruning removes only what is provably not a live review: an entry
+whose process is gone, or a file that could never have been openable anyway
+(`listPending` skips those, so removing one costs no discoverability). Everything else
+waits for `probeReview` on the read path, which can afford a network round trip; this
+runs in front of a review and cannot.
+
+`process.kill(pid, 0)` appears here and _only_ here, in the one direction where it
+cannot lie: `ESRCH` is proof of death, while a reused pid can only make a corpse look
+alive — which costs a file the probe clears on the next `milkplan open`.
 
 Liveness is `probeReview`, and it is deliberately stricter than "status 200": after
 an unclean death the entry survives and its ephemeral port can be re-bound, and any

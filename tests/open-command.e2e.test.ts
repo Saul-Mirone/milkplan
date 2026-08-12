@@ -69,6 +69,7 @@ async function waitForPendingCount(
   return waitForPendingCount(home, count, attemptsLeft - 1)
 }
 
+// oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('milkplan open — end to end through the built CLI', () => {
   // Only ever `--print` here. The command deliberately overrides
   // MILKPLAN_OPEN, so the sandbox's MILKPLAN_NO_BROWSER is the single thing
@@ -99,6 +100,24 @@ describe('milkplan open — end to end through the built CLI', () => {
     await postTo(url, '/api/skip', {})
     await run.done
   }, 15_000)
+
+  // SIGHUP is what a closing terminal sends, and Node's default for an
+  // unhandled one terminates without running 'exit' handlers — so nothing but a
+  // real process can prove this: fakeHookIO installs no signal handlers, and
+  // every other e2e ends its review over HTTP.
+  it.skipIf(process.platform === 'win32')(
+    'cleans up its entry when the terminal closes (SIGHUP)',
+    async () => {
+      const { run, box } = await startReview()
+      expect(await waitForPendingCount(box.home, 1)).toHaveLength(1)
+
+      run.child.kill('SIGHUP')
+
+      expect(await run.done).toBe(0)
+      expect(await waitForPendingCount(box.home, 0)).toEqual([])
+    },
+    15_000,
+  )
 
   it('prunes the entry once the review is gone', async () => {
     // The probe is what covers the exits an 'exit' handler cannot: here the

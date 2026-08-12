@@ -61,12 +61,28 @@ describe('writePending', () => {
     writePending(input, 4242, fake.io)
     expect(fake.state.mkdirs).toEqual([dir])
     expect(fake.state.writes).toHaveLength(1)
-    expect(onlyWrite(fake.state).path).toBe(pendingFileFor(HOME, 4242))
     expect(JSON.parse(onlyWrite(fake.state).content)).toEqual({
       ...input,
       pid: 4242,
       startedAt: FAKE_NOW,
     })
+    expect(fake.files.get(pendingFileFor(HOME, 4242))).toBeDefined()
+  })
+
+  it('publishes by atomic rename, never writing the final path directly', () => {
+    // Writing in place leaves a truncated-but-unwritten window. A hook
+    // registering concurrently would read a live review's file there, judge it
+    // corrupt and unlink it; the writer would then finish into an unlinked
+    // inode and disappear from `milkplan open`.
+    const fake = fakePendingIO()
+    writePending(input, 4242, fake.io)
+
+    const final = pendingFileFor(HOME, 4242)
+    expect(onlyWrite(fake.state).path).toBe(`${final}.tmp`)
+    expect(fake.state.renames).toEqual([{ from: `${final}.tmp`, to: final }])
+    // The temp name is outside PENDING_FILE_PATTERN, so a racing reader skips
+    // it rather than parsing a partial file.
+    expect(listPending(fake.io).map(pidOf)).toEqual([4242])
   })
 
   it('never throws when the directory cannot be created', () => {
@@ -86,15 +102,13 @@ describe('writePending', () => {
     expect(fake.state.logs.join('\n')).toContain('milkplan open')
   })
 
-  it('prunes malformed, refused and stale siblings, but never its own file', () => {
+  it('prunes corrupt, refused and dead-process siblings, never its own file', () => {
     const fake = fakePendingIO({
+      deadPids: [3],
       files: {
         [`${dir}/1.json`]: 'not json{',
         [`${dir}/2.json`]: entryJson({ pid: 2, url: 'http://evil.test/' }),
-        [`${dir}/3.json`]: entryJson({
-          pid: 3,
-          startedAt: FAKE_NOW - 72 * 60 * 60 * 1000,
-        }),
+        [`${dir}/3.json`]: entryJson({ pid: 3 }),
         [`${dir}/4.json`]: entryJson({ pid: 4 }),
         [`${dir}/notes.txt`]: 'ignored',
       },
@@ -110,6 +124,21 @@ describe('writePending', () => {
     expect(fake.files.has(`${dir}/5.json`)).toBe(true)
     // A name that is not a pid is never joined to a path.
     expect(fake.files.has(`${dir}/notes.txt`)).toBe(true)
+  })
+
+  it('never prunes a live review by age, however long it has waited', () => {
+    // The hook timeout that bounds a review is user-editable, so no age proves
+    // one is dead. Deleting here would destroy the user's only way to find a
+    // review they deliberately left waiting.
+    const ancient = entryJson({
+      pid: 4,
+      startedAt: FAKE_NOW - 30 * 24 * 60 * 60 * 1000,
+    })
+    const fake = fakePendingIO({ files: { [`${dir}/4.json`]: ancient } })
+    writePending(input, 5, fake.io)
+
+    expect(fake.state.removed).toEqual([])
+    expect(listPending(fake.io).map(pidOf)).toContain(4)
   })
 
   it('still writes when the directory cannot be listed', () => {
