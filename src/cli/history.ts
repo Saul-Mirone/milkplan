@@ -1,6 +1,16 @@
+import {
+  appendFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { canonicalizeMarkdown } from './canonical'
+import { debugLog } from './debug-log'
 import { normalizeMarkdown } from '../shared/markdown'
 import type { PlanVersion } from '../shared/protocol'
 import type { DeepReadonly } from '../shared/readonly'
@@ -34,6 +44,47 @@ export interface RecordRoundInput {
    * raw markdown here would only mis-compare against the dedupe baseline.
    */
   markdown: string
+}
+
+/** The real filesystem, kept beside its interface the way realLaunchIO is. */
+export const realHistoryIO: HistoryIO = {
+  readFile(path) {
+    try {
+      return readFileSync(path, 'utf8')
+    } catch {
+      return null
+    }
+  },
+  mkdir(path) {
+    mkdirSync(path, { recursive: true })
+  },
+  appendFile(path, content) {
+    appendFileSync(path, content)
+  },
+  listDir(path) {
+    try {
+      return readdirSync(path)
+    } catch {
+      return null
+    }
+  },
+  mtimeMs(path) {
+    try {
+      return statSync(path).mtimeMs
+    } catch {
+      return null
+    }
+  },
+  removeFile(path) {
+    try {
+      rmSync(path)
+    } catch {
+      // Pruning is best-effort; a file that will not go must not break the hook.
+    }
+  },
+  homedir,
+  now: () => Date.now(),
+  log: debugLog,
 }
 
 /** Session files untouched this long are pruned on the next record. */

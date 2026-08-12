@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  buildCandidates,
   detectBrowserSupport,
+  type BrowserEnv,
+} from '../src/cli/browser-support'
+import {
+  buildCandidates,
   openBrowser,
   realLaunchIO,
-  type BrowserEnv,
   type Candidate,
   type LaunchIO,
 } from '../src/cli/open-browser'
@@ -21,6 +23,7 @@ function candidatesFor(
     platform: 'linux',
     release: '6.8.0-generic',
     env: {},
+    mode: 'auto',
     ...overrides,
   })
   return buildCandidates(support, URL)
@@ -63,6 +66,7 @@ describe('buildCandidates', () => {
     // loads and then 403s on every /api call.
     const environments: readonly DeepReadonly<Partial<BrowserEnv>>[] = [
       { platform: 'darwin' },
+      { platform: 'darwin', mode: 'background' },
       { platform: 'win32' },
       { env: { DISPLAY: ':0' } },
       { env: { BROWSER: 'firefox' } },
@@ -79,7 +83,12 @@ describe('buildCandidates', () => {
 
   it('yields nothing when there is no launcher to run', () => {
     expect(candidatesFor({})).toEqual([])
-    expect(candidatesFor({ env: { MILKPLAN_NO_BROWSER: '1' } })).toEqual([])
+    // DISPLAY is what makes this case load-bearing: without it the base fixture
+    // is already 'unavailable' and the assertion would pass without manual
+    // mode doing anything.
+    expect(candidatesFor({ mode: 'manual', env: { DISPLAY: ':0' } })).toEqual(
+      [],
+    )
   })
 })
 
@@ -103,6 +112,7 @@ const wslSupport = detectBrowserSupport({
   platform: 'linux',
   release: '6.8.0-generic',
   env: { WSL_DISTRO_NAME: 'Ubuntu' },
+  mode: 'auto',
 })
 
 // oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
@@ -140,12 +150,13 @@ describe('openBrowser', () => {
   })
 
   it('never launches or reports exhaustion when suppressed', () => {
-    // MILKPLAN_NO_BROWSER means "serve and wait for a manual visit". Reporting
+    // Manual mode means "serve and wait for a manual visit". Reporting
     // exhaustion would turn `pnpm smoke` and ssh -L users into passthroughs.
     const suppressed = detectBrowserSupport({
       platform: 'linux',
       release: '6.8.0-generic',
-      env: { MILKPLAN_NO_BROWSER: '1', DISPLAY: ':0' },
+      env: { DISPLAY: ':0' },
+      mode: 'manual',
     })
     const { io, commands } = recordingIO(() => true)
     let exhausted = 0

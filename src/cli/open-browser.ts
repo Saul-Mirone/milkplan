@@ -1,140 +1,11 @@
 import { spawn } from 'node:child_process'
 
+import type { BrowserSupport, LauncherId } from './browser-support'
 import type { DeepReadonly } from '../shared/readonly'
-
-/**
- * Everything the launch decision depends on. Injected so `detectBrowserSupport`
- * stays a pure function — testable without spawning anything or trusting the
- * host OS the suite happens to run on.
- */
-export interface BrowserEnv {
-  platform: NodeJS.Platform
-  /** os.release(): carries the WSL kernel marker. */
-  release: string
-  env: Partial<Record<string, string>>
-}
-
-/** Launcher identities, resolved to argv by `buildCandidates`. */
-export type LauncherId =
-  | 'browser-env'
-  | 'macos-open'
-  | 'windows-start'
-  | 'wslview'
-  | 'powershell'
-  | 'xdg-open'
-
-export type BrowserSupport =
-  | { kind: 'suppressed' }
-  | { kind: 'unavailable'; reason: string }
-  | {
-      kind: 'available'
-      /** Tried in order; the first launcher that starts wins. */
-      launchers: readonly LauncherId[]
-      /** $BROWSER's value. Set exactly when `launchers` contains 'browser-env'. */
-      browserCommand?: string
-    }
 
 export interface Candidate {
   readonly command: string
   readonly args: readonly string[]
-}
-
-/**
- * Reads an environment variable, treating an empty value as unset — the
- * semantics the original MILKPLAN_NO_BROWSER check already used, and the only
- * sane reading of `DISPLAY=`.
- */
-function envValue(
-  env: DeepReadonly<Partial<Record<string, string>>>,
-  key: string,
-): string | undefined {
-  const value = env[key]
-  return value === undefined || value === '' ? undefined : value
-}
-
-/**
- * WSL reports platform 'linux', so the Windows-side launchers have to be gated
- * on an explicit WSL signal. The kernel-release fallback covers a stripped
- * environment; casing differs between WSL1 ("4.4.0-19041-Microsoft") and WSL2
- * ("5.15.90.1-microsoft-standard-WSL2"), hence the lowercased compare.
- */
-function isWsl(environment: DeepReadonly<BrowserEnv>): boolean {
-  if (environment.platform !== 'linux') return false
-  if (envValue(environment.env, 'WSL_DISTRO_NAME') !== undefined) return true
-  if (envValue(environment.env, 'WSL_INTEROP') !== undefined) return true
-  return environment.release.toLowerCase().includes('microsoft')
-}
-
-function available(
-  launchers: readonly LauncherId[],
-  browserCommand: string | undefined,
-): BrowserSupport {
-  return { kind: 'available', launchers, browserCommand }
-}
-
-/**
- * The user's browser lives on the Windows side, so the Windows launchers come
- * first even under WSLg — a WSL distro with a real Linux browser installed is
- * the rare case, and xdg-open still backstops it when there is a display.
- */
-function wslLaunchers(
-  override: readonly LauncherId[],
-  hasDisplay: boolean,
-): readonly LauncherId[] {
-  return [
-    ...override,
-    'wslview',
-    'powershell',
-    'windows-start',
-    ...(hasDisplay ? (['xdg-open'] as const) : []),
-  ]
-}
-
-/**
- * Decides how — or whether — a browser can be opened here.
- *
- * 'unavailable' is the load-bearing verdict: the hook passes through to Claude
- * Code's own approval prompt instead of serving a review nobody can reach. Left
- * to itself the process would sit on a listening socket until the hook timeout
- * (86400s as written by `milkplan init`), which reads as a frozen session.
- */
-export function detectBrowserSupport(
-  environment: DeepReadonly<BrowserEnv>,
-): BrowserSupport {
-  // First, so the automation escape hatch keeps its exact meaning: serve, never
-  // launch, and never pass through.
-  if (envValue(environment.env, 'MILKPLAN_NO_BROWSER') !== undefined)
-    return { kind: 'suppressed' }
-
-  // $BROWSER is the POSIX convention; on win32 it is meaningless and `spawn`
-  // there does not resolve .cmd/.bat wrappers, so it is not honored.
-  const browserCommand =
-    environment.platform === 'win32'
-      ? undefined
-      : envValue(environment.env, 'BROWSER')
-  const override: readonly LauncherId[] =
-    browserCommand === undefined ? [] : ['browser-env']
-
-  if (environment.platform === 'darwin')
-    return available([...override, 'macos-open'], browserCommand)
-  if (environment.platform === 'win32')
-    return available(['windows-start'], undefined)
-
-  const hasDisplay =
-    envValue(environment.env, 'DISPLAY') !== undefined ||
-    envValue(environment.env, 'WAYLAND_DISPLAY') !== undefined
-
-  if (isWsl(environment))
-    return available(wslLaunchers(override, hasDisplay), browserCommand)
-
-  if (hasDisplay) return available([...override, 'xdg-open'], browserCommand)
-  // $BROWSER on a display-less box is an explicit "here is how to open a URL",
-  // which is exactly the escape hatch an SSH or container user needs.
-  if (browserCommand !== undefined) return available(override, browserCommand)
-  return {
-    kind: 'unavailable',
-    reason: 'no DISPLAY, WAYLAND_DISPLAY or BROWSER',
-  }
 }
 
 /**
@@ -147,6 +18,12 @@ const FIXED_CANDIDATES: Record<
   (url: string) => Candidate
 > = {
   'macos-open': (url) => ({ command: 'open', args: [url] }),
+  // -g leaves the browser where it is instead of raising it (flags precede the
+  // operand; `open` treats an http URL as a URL, not a path). Not -j, which
+  // hides the browser outright, and not -n, which would start a second
+  // instance. Best-effort by nature: a browser starting from cold may still
+  // activate itself despite the flag.
+  'macos-open-bg': (url) => ({ command: 'open', args: ['-g', url] }),
   // The empty argument is `start`'s title parameter; without it `start` would
   // consume the URL as the window title.
   'windows-start': (url) => ({
@@ -232,9 +109,9 @@ export const realLaunchIO: LaunchIO = {
  * `detectBrowserSupport` before the server binds.
  *
  * `onExhausted` means every launcher was missing — nothing opened, so the caller
- * can pass through. A suppressed verdict returns early instead:
- * MILKPLAN_NO_BROWSER means "serve and wait for a manual visit", never "pass
- * through".
+ * can pass through. A suppressed verdict returns early instead: manual mode
+ * (MILKPLAN_OPEN=manual, or its older spelling MILKPLAN_NO_BROWSER) means
+ * "serve and wait for a manual visit", never "pass through".
  */
 export function openBrowser(
   url: string,

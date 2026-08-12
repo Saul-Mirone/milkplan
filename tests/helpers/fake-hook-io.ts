@@ -1,6 +1,7 @@
+import type { BrowserSupport } from '../../src/cli/browser-support'
 import type { RecordRoundInput } from '../../src/cli/history'
 import type { HookIO } from '../../src/cli/hook-io'
-import type { BrowserSupport } from '../../src/cli/open-browser'
+import type { PendingInput } from '../../src/cli/pending'
 import type { ReviewSession, RunningServer } from '../../src/cli/server'
 import type {
   HookPayload,
@@ -38,6 +39,8 @@ export interface FakeHookState {
   exits: number[]
   planWrites: Written[]
   historyRecords: RecordRoundInput[]
+  /** Every review handed to registerPending, for input assertions. */
+  pendingRegistrations: PendingInput[]
   /** Every session handed to startServer, for payload assertions. */
   sessions: DeepReadonly<ReviewSession>[]
   serverStarts: number
@@ -92,6 +95,7 @@ export function fakeHookIO(
     exits: [],
     planWrites: [],
     historyRecords: [],
+    pendingRegistrations: [],
     sessions: [],
     serverStarts: 0,
     launches: [],
@@ -169,6 +173,10 @@ function buildIO(
 ): HookIO {
   return {
     resolve: () => options.plan ?? DEFAULT_PLAN,
+    registerPending(input) {
+      state.pendingRegistrations.push({ ...input })
+      state.events.push('register-pending')
+    },
     recordHistory(input) {
       state.historyRecords.push({ ...input })
       state.events.push('record-history')

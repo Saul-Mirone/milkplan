@@ -5,14 +5,20 @@ import {
   type BrowserEnv,
   type BrowserSupport,
   type LauncherId,
-} from '../src/cli/open-browser'
+} from '../src/cli/browser-support'
 import type { DeepReadonly } from '../src/shared/readonly'
 
 /** A bare Linux box — no display, stock kernel — unless a case overrides it. */
 function environment(
   overrides: DeepReadonly<Partial<BrowserEnv>> = {},
 ): DeepReadonly<BrowserEnv> {
-  return { platform: 'linux', release: '6.8.0-generic', env: {}, ...overrides }
+  return {
+    platform: 'linux',
+    release: '6.8.0-generic',
+    env: {},
+    mode: 'auto',
+    ...overrides,
+  }
 }
 
 function launchersOf(
@@ -32,27 +38,64 @@ function reasonOf(support: DeepReadonly<BrowserSupport>): string {
   return support.kind === 'unavailable' ? support.reason : ''
 }
 
+const WSL_CHAIN: readonly LauncherId[] = [
+  'wslview',
+  'powershell',
+  'windows-start',
+]
+
 // oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('detectBrowserSupport', () => {
-  it('suppresses the launch when MILKPLAN_NO_BROWSER is set, on any platform', () => {
+  it('suppresses the launch in manual mode, on any platform', () => {
     for (const platform of ['darwin', 'win32', 'linux'] as const) {
       const support = detectBrowserSupport(
-        environment({ platform, env: { MILKPLAN_NO_BROWSER: '1' } }),
+        environment({ platform, mode: 'manual' }),
       )
       expect(support.kind).toBe('suppressed')
     }
   })
 
-  it('treats an empty MILKPLAN_NO_BROWSER as unset', () => {
-    // Preserves the original check, which required a non-empty value.
-    expect(
-      detect({ platform: 'darwin', env: { MILKPLAN_NO_BROWSER: '' } }),
-    ).toEqual(['macos-open'])
+  it('suppresses rather than reporting unavailable on a headless box', () => {
+    // The load-bearing property manual mode inherits from MILKPLAN_NO_BROWSER:
+    // 'unavailable' would make the hook pass through, so a headless user who
+    // asked to open the review themselves would never get one to open.
+    expect(detectBrowserSupport(environment({ mode: 'manual' })).kind).toBe(
+      'suppressed',
+    )
   })
 
   it('opens on macOS and Windows without any display variable', () => {
     expect(detect({ platform: 'darwin' })).toEqual(['macos-open'])
     expect(detect({ platform: 'win32' })).toEqual(['windows-start'])
+  })
+
+  it('swaps in the background launcher on macOS', () => {
+    expect(detect({ platform: 'darwin', mode: 'background' })).toEqual([
+      'macos-open-bg',
+    ])
+    // $BROWSER still wins: an arbitrary browser command has no known
+    // background flag, so background only reshapes the platform launcher.
+    expect(
+      detect({
+        platform: 'darwin',
+        mode: 'background',
+        env: { BROWSER: 'firefox' },
+      }),
+    ).toEqual(['browser-env', 'macos-open-bg'])
+  })
+
+  it('degrades background to the normal launcher off macOS', () => {
+    // No cross-platform equivalent of `open -g` exists; the hook logs the
+    // degradation rather than refusing to open anything.
+    expect(detect({ mode: 'background', env: { DISPLAY: ':0' } })).toEqual([
+      'xdg-open',
+    ])
+    expect(detect({ platform: 'win32', mode: 'background' })).toEqual([
+      'windows-start',
+    ])
+    expect(
+      detect({ mode: 'background', env: { WSL_DISTRO_NAME: 'Ubuntu' } }),
+    ).toEqual(WSL_CHAIN)
   })
 
   it('ignores $BROWSER on Windows, where spawn cannot resolve .cmd/.bat wrappers', () => {
@@ -99,12 +142,6 @@ describe('detectBrowserSupport', () => {
     ])
   })
 })
-
-const WSL_CHAIN: readonly LauncherId[] = [
-  'wslview',
-  'powershell',
-  'windows-start',
-]
 
 describe('detectBrowserSupport under WSL', () => {
   it('recognizes WSL from either environment marker', () => {

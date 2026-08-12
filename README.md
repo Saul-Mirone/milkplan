@@ -159,8 +159,53 @@ npm uninstall -g @enorim/milkplan
 would silently re-download it from the registry on the next plan approval.)
 
 Uninstalling does not delete review data: the plan text of past rounds stays in
-`~/.claude/milkplan/history/` (see Plan history below) — remove that directory
-yourself if you don't want to keep it.
+`~/.claude/milkplan/history/` (see Plan history below), alongside the pending-review
+registry in `~/.claude/milkplan/pending/` — remove that directory yourself if you
+don't want to keep it.
+
+## Opening the review
+
+By default the review opens in a new tab and your browser takes focus. If you leave
+Claude Code running in a background terminal, that window arriving unannounced is
+disruptive — `MILKPLAN_OPEN` changes when and how it appears:
+
+| `MILKPLAN_OPEN`  | what happens when a plan lands                                   |
+| ---------------- | ---------------------------------------------------------------- |
+| `auto` (default) | a tab opens and the browser comes to the front                   |
+| `background`     | the tab loads behind everything; your browser never steals focus |
+| `manual`         | nothing opens — the review waits until you run `milkplan open`   |
+
+```sh
+export MILKPLAN_OPEN=manual   # in ~/.zshrc, ~/.bashrc, …
+```
+
+Claude Code reads its environment from the shell that started it, so restart the
+session after changing this.
+
+```
+milkplan open            # open the waiting review (the newest, if several)
+milkplan open --print    # print the URLs instead, one per line
+milkplan open --all      # open every waiting review
+```
+
+`milkplan open` works from any terminal — the one running Claude Code is blocked by
+the hook itself, so use another. On a **plugin install** `milkplan` is not on your
+`PATH` (a plugin's executables reach only Claude Code's own Bash tool), so run
+`npx -y @enorim/milkplan open` instead; it finds the same reviews, since they are
+tracked under your home directory rather than the install location.
+
+Two caveats worth knowing before you pick:
+
+- `background` is **macOS only** — it is `open -g`, and no cross-platform equivalent
+  exists, so elsewhere (including WSL) it behaves like `auto`. It is also
+  best-effort: a browser starting from cold may still bring itself forward. And
+  `$BROWSER`, if you set it, wins over it.
+- `background` leaves a tab behind for every plan, which goes dead once the hook
+  exits (you decided elsewhere, pressed Esc, or the timeout fired). `manual`
+  accumulates nothing.
+
+Either way, milkplan records the running review, so `milkplan open` also gets you
+back into one whose tab you closed by accident.
 
 ## How it works
 
@@ -225,14 +270,15 @@ first place to look.
   absolute path of the node binary; when a version manager (fnm/nvm) deletes
   that version, the hook dies silently. Re-run `milkplan init` — it refreshes
   stale entries in place.
-- **Closed the tab before deciding.** Recover the URL from the log, or press
-  Esc in the terminal to cancel the hook and use the native prompt. The hook
-  timeout (24h by default) eventually falls back to the native prompt too.
+- **Closed the tab before deciding.** Run `milkplan open` from any terminal — it
+  reopens whatever review is still waiting. (Or recover the URL from the log, or
+  press Esc in the terminal to cancel the hook and use the native prompt. The hook
+  timeout (24h by default) eventually falls back to the native prompt too.)
 - **Remote / headless (SSH, containers).** With no display and no `$BROWSER`,
   milkplan passes straight through to the terminal prompt rather than serving a
-  UI nobody can reach. To review in a browser anyway, set
-  `MILKPLAN_NO_BROWSER=1` so it serves and waits, then forward the port
-  (`ssh -L <port>:127.0.0.1:<port> <host>`) and open the URL from the log
+  UI nobody can reach. To review in a browser anyway, set `MILKPLAN_OPEN=manual`
+  so it serves and waits, then run `milkplan open --print` to get the URL,
+  forward the port (`ssh -L <port>:127.0.0.1:<port> <host>`) and open it
   locally. Setting `$BROWSER` works too, and keeps the automatic launch.
 - **Skip vs closing the tab.** Skip hands control back to the terminal prompt
   immediately (annotations you typed are discarded); closing the tab leaves
@@ -252,13 +298,19 @@ pnpm smoke        # test-fire: full hook loop against a synthesized session
 transcript, resolves it, starts the server, and opens the browser; the decision JSON
 lands on stdout exactly as Claude Code would receive it.
 
-Two environment variables affect the browser launch:
+Three environment variables affect the browser launch:
 
-- `MILKPLAN_NO_BROWSER=1` — serve and wait, but never launch anything. This is
-  the automation escape hatch; it never turns into a passthrough.
+- `MILKPLAN_OPEN` — `auto` (default), `background` or `manual`. See
+  [Opening the review](#opening-the-review) above.
+- `MILKPLAN_NO_BROWSER=1` — the older spelling of `manual`, kept because
+  automation depends on it. It still wins over `MILKPLAN_OPEN`, and it is the one
+  switch `milkplan open` also honors — with it set, `open` prints the URL rather
+  than launching anything.
 - `BROWSER` — the command to launch instead of the platform default. It is taken
   as a bare command and handed the URL as a single argument (no `%s` expansion,
-  no colon-separated lists). Honored everywhere except native Windows.
+  no colon-separated lists). Honored everywhere except native Windows. It wins
+  over `background`, since an arbitrary browser command has no known background
+  flag.
 
 ## Releasing
 
@@ -311,13 +363,16 @@ releases published before the plugin manifests existed.
   prefer a Linux browser instead. The review URL is loopback, which WSL2's
   default `localhostForwarding` (and WSL1's shared network stack, and mirrored
   networking mode) relays into the distro — with `localhostForwarding=false` in
-  `.wslconfig` the browser opens but cannot reach the server.
+  `.wslconfig` the browser opens but cannot reach the server. `MILKPLAN_OPEN=background`
+  does nothing here — there is no `open -g` equivalent on the Windows side — so use
+  `MILKPLAN_OPEN=manual` plus `milkplan open` if you don't want the window jumping at you.
 
 - **No GUI browser.** On a box with no `DISPLAY`, no `WAYLAND_DISPLAY` and no
   `$BROWSER` — SSH sessions, containers — milkplan passes through to the
   terminal prompt instead of holding a port nobody can reach. Same if every
   launcher turns out to be missing (WSL with interop disabled, for instance).
-  See Troubleshooting for reviewing over a forwarded port.
+  `MILKPLAN_OPEN=manual` overrides this and serves anyway; see Troubleshooting
+  for reviewing over a forwarded port.
 
 - Current Claude Code stores plans as files under `~/.claude/plans/` and passes
   the path in the hook payload (`tool_input.planFilePath`), which milkplan uses

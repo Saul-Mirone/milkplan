@@ -22,9 +22,12 @@ function reportOutcome(
       `the npm package itself is untouched — remove it with: npm uninstall -g ${PACKAGE_NAME}`,
     )
     // Never deleted automatically: destroying user data a reinstall might want
-    // is not this command's call to make.
+    // is not this command's call to make. That covers pending/ too — its
+    // entries are worthless once their server is gone (the token they carry
+    // names a port nothing is listening on), and one of them may belong to a
+    // review that is still open right now.
     io.log(
-      'plan review history (plan text) remains in ~/.claude/milkplan/history/ — delete it yourself if unwanted',
+      'plan review data remains in ~/.claude/milkplan/ (history/ and pending/) — delete it yourself if unwanted',
     )
     return
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildSession, type FoundPlan } from '../src/cli/hook'
+import { buildSession, type FoundPlan } from '../src/cli/hook-session'
 import type { DecisionRequest } from '../src/shared/protocol'
 import type { DeepReadonly } from '../src/shared/readonly'
 import {

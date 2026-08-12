@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path'
 import type { HookPayload } from '../shared/protocol'
 import { runHook } from './hook'
 import { runInit } from './init'
+import { runOpen } from './open-command'
 import { runUninstall } from './uninstall'
 import { VERSION } from './version'
 
@@ -26,6 +27,9 @@ Usage:
   milkplan init --project --shared
                                  Register a portable hook in <cwd>/.claude/settings.json
                                  for the whole team (requires an npm install)
+  milkplan open [--print] [--all]
+                                 Open a review that is waiting (MILKPLAN_OPEN=manual);
+                                 --print writes the URLs instead of launching
   milkplan uninstall             Remove milkplan hooks from user and project settings
   milkplan test-fire [--payload <file>]
                                  Fire the real hook path against a sample plan
@@ -166,6 +170,10 @@ async function main(): Promise<void> {
   }
   if (command === 'init') {
     runInit(args.slice(1))
+    return
+  }
+  if (command === 'open') {
+    await runOpen(args.slice(1))
     return
   }
   if (command === 'uninstall') {

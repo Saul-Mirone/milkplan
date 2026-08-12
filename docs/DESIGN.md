@@ -164,9 +164,13 @@ server and a browser).
    append would make it look stale). Runs on every call; a readdir is cheap
    and a throttle marker would itself be corruptible state.
 
-`src/cli/hook-io.ts` exports `realHistoryIO: HistoryIO` and `HookIO` gains
+`src/cli/history.ts` exports `realHistoryIO: HistoryIO` (each module owns its own
+real IO, the way `open-browser.ts` owns `realLaunchIO`; `hook-io.ts` is left as a
+thin composition root) and `HookIO` gains
 `recordHistory(input: DeepReadonly<RecordRoundInput>): PlanVersion[]` —
 `recordRound` over `realHistoryIO`, same total/fail-open contract as `resolve`.
+`src/cli/pending.ts` mirrors this module exactly, one directory over — see its
+section below.
 
 ⚠️ **Diff semantics caveat:** only hook-time submissions are stored — the
 reviewer-edited version of a round never is. But `onDecision` writes
@@ -340,7 +344,8 @@ export async function runHook(stdinJson: string): Promise<void>
 
 1. Parse `HookPayload` (malformed → passthrough).
 2. `resolvePlan` with real fs/os IO (`source: 'none'` → passthrough).
-3. Build `ReviewSession`:
+3. Build `ReviewSession` (in `src/cli/hook-session.ts`, split out of `hook.ts` to
+   keep `runHook` under the 50-line `max-lines-per-function` cap):
    - `onDecision`: (a) if `editedMarkdown` present and source is `file`, write it to
      the plan path (best-effort; failure → still proceed, note dropped file update to
      stderr); (b) `buildDecisionOutput`; (c) write single-line JSON + `\n` to stdout;
@@ -354,31 +359,64 @@ markdown})` — after the browser-support check, i.e. after every passthrough
    Total/fail-open like `io.resolve`: no try/catch at the call site. The
    returned versions minus their last element (always the current round) become
    `ReviewPayload.history`.
-6. `startReviewServer` (failure → passthrough), then `openBrowser(url, support,
-realLaunchIO, onExhausted)`. Every launcher missing → passthrough; a launcher
-   that started but opened nothing → print URL to stderr and keep waiting.
-7. SIGINT/SIGTERM → exit 0 silently. Wait indefinitely (hook timeout is the backstop).
+6. `startReviewServer` (failure → passthrough), then `registerAndLaunch`: log the
+   URL, `io.registerPending({url, sessionId, cwd, planPath})`, then
+   `openBrowser(url, support, realLaunchIO, onExhausted)`. Registration happens in
+   every mode (it is also what recovers a tab closed by accident), after the URL
+   log (that line must survive a registry that cannot be written) and after every
+   passthrough exit above. Every launcher missing → passthrough; a launcher that
+   started but opened nothing → print URL to stderr and keep waiting.
+7. SIGINT/SIGTERM/SIGHUP → exit 0 silently. SIGHUP matters because closing the
+   terminal of a backgrounded Claude Code sends it, and Node's default for an
+   unhandled SIGHUP skips `'exit'` handlers — which would strand the pending
+   entry. Wait indefinitely (hook timeout is the backstop).
 
 Passthrough = print nothing, `process.exit(0)`.
 
-### `src/cli/open-browser.ts`
+### `src/cli/open-mode.ts`
 
+```ts
+export type OpenMode = 'auto' | 'background' | 'manual'
+export function noBrowserRequested(env): boolean
+export function resolveOpenMode(env, log): OpenMode
+```
+
+The launch policy, read from `MILKPLAN_OPEN` (trimmed, case-insensitive; an
+unrecognized value falls back to `auto` **and logs** — a typo in a shell profile
+must not cost a review; empty/whitespace is treated as unset, silently).
+`MILKPLAN_NO_BROWSER` wins outright and means `manual`: it predates the mode
+switch, its documented semantics are exactly manual's, and `cli-process.ts` sets
+it on every e2e run, so an ambient `MILKPLAN_OPEN` must not be able to re-enable
+real browser launches during `pnpm test`.
+
+### `src/cli/browser-support.ts` and `src/cli/open-browser.ts`
+
+Split at the policy/spawning seam (which the test files already used): support
+detection lives in `browser-support.ts`, argv and spawning in `open-browser.ts`.
 Pure decision + thin spawner, so every branch is unit-testable without spawning
 anything or trusting the host OS:
 
 ```ts
-detectBrowserSupport(env: BrowserEnv): BrowserSupport   // pure
-buildCandidates(support, url): readonly Candidate[]     // pure
+detectBrowserSupport(env: BrowserEnv): BrowserSupport      // pure
+realBrowserSupport(log, forced?: OpenMode): BrowserSupport // impure counterpart
+buildCandidates(support, url): readonly Candidate[]        // pure
 openBrowser(url, support, io: LaunchIO, onExhausted?): void
 ```
 
-`BrowserSupport` is `suppressed` (MILKPLAN_NO_BROWSER — serve, never launch,
-never passthrough), `unavailable` (→ passthrough), or `available` with an ordered
-launcher chain:
+`BrowserEnv` carries a **required** `mode: OpenMode`, passed in rather than read
+from `env` here: `milkplan open` forces `'auto'`, and requiring the field makes a
+call site that forgets to thread it a compile error. `realBrowserSupport` is the
+only place that knows both the resolved mode and the real platform, so it is where
+the "background is macOS-only" degradation is logged.
+
+`BrowserSupport` is `suppressed` (manual mode — serve, never launch, never
+passthrough; carries a `reason` naming the switch), `unavailable` (→ passthrough),
+or `available` with an ordered launcher chain:
 
 | env                             | chain                                                                                                                                                                   |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | darwin                          | `$BROWSER?` → `open <url>`                                                                                                                                              |
+| darwin, `background`            | `$BROWSER?` → `open -g <url>` (not `-j`, which hides the browser; not `-n`, which starts a second instance). macOS only — elsewhere `background` degrades to `auto`.    |
 | win32                           | `cmd.exe /c start "" <url>` (`$BROWSER` not honored)                                                                                                                    |
 | WSL                             | `$BROWSER?` → `wslview` → `powershell.exe -NoProfile -NonInteractive -Command "Start-Process '<url>'"` → `cmd.exe /c start "" <url>` → `xdg-open` (only with a display) |
 | linux w/ display                | `$BROWSER?` → `xdg-open <url>`                                                                                                                                          |
@@ -397,6 +435,65 @@ which is why `explorer.exe` is not in the chain at all. Launchers still run
 
 Every candidate must carry the URL's `#token=` fragment verbatim; the UI falls
 back to `DEV_TOKEN` without it, which yields a page that loads and then 403s.
+
+### `src/cli/pending.ts` and `src/cli/probe-review.ts`
+
+The registry `milkplan open` reads, mirroring `history.ts` (injected sync-fs
+`PendingIO`, total, fail-open):
+
+```ts
+writePending(input, pid, io): void       // + age-prunes siblings, never its own pid
+removePending(pid, io): void
+listPending(io): PendingEntry[]          // parsed + pattern-valid, newest first, UNPROBED
+probeReview(entry, fetchFn: ProbeFetch): Promise<'live' | 'dead' | 'indeterminate'>
+```
+
+`~/.claude/milkplan/pending/<pid>.json` holding
+`{pid, url, sessionId, cwd, planPath, startedAt}`. Keyed by **pid**, not session
+id, so round N's cleanup can never unlink round N+1's file, and so only a
+pid-shaped name (`/^\d{1,10}\.json$/`) is ever joined to a path. The stored URL is
+re-validated against the one shape `startReviewServer` generates
+(`/^http:\/\/127\.0\.0\.1:\d{1,5}\/#token=[0-9a-f]{32}$/`) before it can reach a
+launcher. Directory `0o700`, file `0o600` — unlike a history file, a pending entry
+holds a **capability**: the URL carries the token that approves the plan. (POSIX
+only, and at creation time only.)
+
+Pruning on write is age-only (`PENDING_STALE_AFTER_MS`, 48h) because a 500 ms probe
+budget does not belong in front of a review. That age is a **litter backstop, not a
+liveness proof** — the hook timeout that actually bounds a review lives in
+user-editable settings, so no age can prove a review is dead.
+
+Liveness is `probeReview`, and it is deliberately stricter than "status 200": after
+an unclean death the entry survives and its ephemeral port can be re-bound, and any
+local server with an SPA catch-all answers 200 to `/api/review`. So `live` requires
+200 **and** a JSON body whose `meta.sessionId` matches the entry — free, since the
+real server already serves exactly that. The token rides in `TOKEN_HEADER`, lifted
+out of the `#token=` fragment, which is never transmitted. `dead` (unlink) is
+connection-refused or any completed non-matching response; a **timeout is
+`indeterminate`** (keep the file, just do not offer it) because a Ctrl-Z'd session
+accepts the connection and serves again on `fg`. `process.kill(pid, 0)` is not used:
+pid reuse, port reuse and hung processes all make it lie.
+
+### `src/cli/open-command.ts`
+
+```ts
+runOpen(args: readonly string[], io: OpenIO = realOpenIO): Promise<void>
+```
+
+`milkplan open [--print] [--all]`. Probes every registered review, unlinks the dead,
+then: none live → one stderr line + `fail()`; `--print` → URLs on stdout, launch
+nothing; otherwise launch the newest (`--all` launches every one) and name the rest
+so a second session's review is not invisible.
+
+It forces `mode: 'auto'` — `MILKPLAN_OPEN=manual` configures the _hook_, and this
+command is what manual mode expects you to run instead. It does **not** override
+`MILKPLAN_NO_BROWSER`, whose contract is "never launch anything": with it set,
+`open` prints instead. That is what makes a stray bare `open` in CI structurally
+unable to launch a browser rather than merely discouraged. `unavailable` support
+also prints and exits 0 — the ssh user wants the URL. Launcher exhaustion logs the
+URL and calls `fail()`; that callback runs after `runOpen` returns (spawn ENOENT
+arrives on a later tick) but drains before the process exits, so the late exit code
+still lands.
 
 ### Distribution (`.claude-plugin/`, `hooks/`)
 
@@ -632,8 +729,34 @@ involvement.
   drive with `fetch`: 403 without token, review payload roundtrip, decision flow
   invokes `onDecision`, skip invokes `onSkip`, path traversal on static route is
   rejected.
-- `tests/open-browser.detect.test.ts`: injected `BrowserEnv` — suppression,
-  per-platform chains, `$BROWSER` precedence, headless verdict, WSL via each of
+- `tests/open-mode.test.ts`: trimming/casing, unrecognized value → `auto` + log,
+  empty/whitespace treated as unset silently, `MILKPLAN_NO_BROWSER` precedence in
+  both directions.
+- `tests/pending.test.ts` (+ `helpers/fake-pending-io.ts`): write shape and pid
+  stamping, fail-open on mkdir/write failure, write-side pruning of malformed /
+  URL-refused / stale siblings while never touching its own file or a non-pid
+  name, newest-first listing, torn and wrong-shaped entries skipped, tolerance for
+  unknown fields from a newer writer.
+- `tests/probe-review.test.ts`: injected `ProbeFetch` — token lifted from the
+  fragment into the header against `/api/review`; a 200 from a different session,
+  a non-JSON 200 and a 403 are all `dead`; connection-refused is `dead` but a
+  timeout is `indeterminate`; an unparseable stored URL never touches the network.
+- `tests/open-command.test.ts`: fake `OpenIO` — none live → fail; single / newest
+  - listing / `--all`; `--print` launches nothing; dead entries removed and
+    indeterminate ones kept-but-not-offered; `unavailable` and suppressed both print
+    without failing; launcher exhaustion reports the URL and fails; unknown option.
+- `tests/hook.pending.test.ts`: registers once with the right input, `planPath:
+null` for inline plans, ordered after `start-server`, nothing on any passthrough,
+  and still registers in manual mode.
+- `tests/open-command.e2e.test.ts`: drives the built CLI — empty registry exits 1,
+  a hook-registered review is found and printed, and the entry is gone once the
+  review ends. **`--print` only**: `open` overrides `MILKPLAN_OPEN`, so the
+  sandbox's `MILKPLAN_NO_BROWSER` is the only thing between a bare `open` and a
+  real browser window on the machine running `pnpm test`.
+- `tests/browser-support.test.ts`: injected `BrowserEnv` — suppression,
+  per-platform chains (incl. `background` swapping in `macos-open-bg` on darwin and
+  degrading elsewhere, and manual suppressing even on a headless box where `auto`
+  would report `unavailable`), `$BROWSER` precedence, headless verdict, WSL via each of
   the three signals (incl. WSL1's capitalized kernel string), WSLg ordering, and
   the negatives (stock kernel, WSL vars on native win32).
 - `tests/open-browser.test.ts`: argv per launcher (PowerShell quoting, `start`'s
@@ -659,7 +782,8 @@ involvement.
   Escape / backdrop / Close dismissal, dialog a11y attributes, initial focus.
 - `tests/hook.test.ts` asserts `recordHistory` runs with the right input on the
   happy path (and `planPath: null` for inline plans) and never runs on
-  passthrough exits; `tests/hook.e2e.test.ts` drives the real binary across
+  passthrough exits (the registry equivalents live in `tests/hook.pending.test.ts`,
+  since `hook.test.ts` is near the 300-line `max-lines` cap); `tests/hook.e2e.test.ts` drives the real binary across
   rounds of one session (request changes → next round's `/api/review` carries
   the prior round in `history`, the `.jsonl` file grows, an unchanged
   resubmission dedupes); `tests/dist.test.ts` asserts the built CSS ships the
