@@ -1,6 +1,5 @@
 @import '@milkdown/crepe/theme/common/style.css';
 @import '@milkdown/crepe/theme/nord.css';
-@import '@milkdown/crepe/theme/nord-dark.css' (prefers-color-scheme: dark);
 
 /* ---- fonts ------------------------------------------------------------- */
 
@@ -130,26 +129,18 @@
     Arial, var(--mp-font-cjk), sans-serif;
   --mp-font-mono:
     ui-monospace, SFMono-Regular, Menlo, Consolas, var(--mp-font-cjk), monospace;
-  --mp-bg: #ffffff;
-  --mp-fg: #1c1b22;
-  --mp-muted: #6b6a72;
-  --mp-border: #e3e2e8;
-  --mp-surface: #f7f7f9;
-  --mp-accent: #5b5bd6;
-  --mp-accent-fg: #ffffff;
+  /* light-dark() rather than a (prefers-color-scheme: dark) block, because a
+     media query answers only to the OS. Routing every color through
+     `color-scheme` above lets ThemeToggle override it — see src/ui/theme.ts. */
+  --mp-bg: light-dark(#ffffff, #17161b);
+  --mp-fg: light-dark(#1c1b22, #e6e5ea);
+  --mp-muted: light-dark(#6b6a72, #93929a);
+  --mp-border: light-dark(#e3e2e8, #2e2d34);
+  --mp-surface: light-dark(#f7f7f9, #201f26);
+  --mp-accent: light-dark(#5b5bd6, #8f8ff0);
+  --mp-accent-fg: light-dark(#ffffff, #17161b);
+  /* Legible on both grounds, so it never needed a dark variant. */
   --mp-danger: #c0392b;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --mp-bg: #17161b;
-    --mp-fg: #e6e5ea;
-    --mp-muted: #93929a;
-    --mp-border: #2e2d34;
-    --mp-surface: #201f26;
-    --mp-accent: #8f8ff0;
-    --mp-accent-fg: #17161b;
-  }
 }
 
 /* Same stacks nord declares, with the now-loaded variable faces in front and
@@ -164,6 +155,38 @@
   --crepe-font-code:
     'JetBrains Mono Variable', 'JetBrains Mono', Menlo, Monaco, 'Courier New',
     Courier, var(--mp-font-cjk), monospace;
+
+  /* Crepe ships nord and nord-dark as two stylesheets and nothing else, so the
+     dark half used to arrive through a media-conditioned @import that no
+     button could override. Both palettes are folded into light-dark() here
+     instead; tests/theme-parity.test.ts fails if either drifts upstream. */
+  --crepe-color-background: light-dark(#fdfcff, #1b1c1d);
+  --crepe-color-on-background: light-dark(#1b1c1d, #f8f9ff);
+  --crepe-color-surface: light-dark(#f8f9ff, #111418);
+  --crepe-color-surface-low: light-dark(#f2f3fa, #191c20);
+  --crepe-color-on-surface: light-dark(#191c20, #e1e2e8);
+  --crepe-color-on-surface-variant: light-dark(#43474e, #c3c6cf);
+  --crepe-color-outline: light-dark(#73777f, #8d9199);
+  --crepe-color-primary: light-dark(#37618e, #a1c9fd);
+  --crepe-color-secondary: light-dark(#d7e3f8, #3c4858);
+  --crepe-color-on-secondary: light-dark(#101c2b, #d7e3f8);
+  --crepe-color-inverse: light-dark(#2e3135, #e1e2e8);
+  --crepe-color-on-inverse: light-dark(#eff0f7, #2e3135);
+  --crepe-color-inline-code: light-dark(#ba1a1a, #ffb4ab);
+  --crepe-color-error: light-dark(#ba1a1a, #ffb4ab);
+  --crepe-color-hover: light-dark(#eceef4, #1d2024);
+  --crepe-color-selected: light-dark(#e1e2e8, #32353a);
+  --crepe-color-inline-area: light-dark(#d8dae0, #111418);
+
+  /* Not colors, so light-dark() has to wrap the rgba() components rather than
+     the whole value. nord-dark also swaps the two layers' order; identical
+     geometry aside from that, so the light order is kept. */
+  --crepe-shadow-1:
+    0px 1px 3px 1px light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.15)),
+    0px 1px 2px 0px light-dark(rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.3));
+  --crepe-shadow-2:
+    0px 2px 6px 2px light-dark(rgba(0, 0, 0, 0.15), rgba(255, 255, 255, 0.15)),
+    0px 1px 2px 0px light-dark(rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.3));
 }
 
 * {
@@ -406,8 +429,14 @@ body {
   flex: none;
 }
 
-.mp-actionbar__error {
+.mp-actionbar__lead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-right: auto;
+}
+
+.mp-actionbar__error {
   font-size: 13px;
   color: var(--mp-danger);
 }
@@ -437,6 +466,13 @@ body {
 
 .mp-button--ghost {
   background: transparent;
+}
+
+/* Reads as a setting, not a decision — the bar's other buttons act on the
+   plan, this one only changes how the page looks. */
+.mp-theme {
+  padding: 7px 12px;
+  color: var(--mp-muted);
 }
 
 .mp-mode {

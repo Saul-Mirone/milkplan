@@ -5,6 +5,7 @@ import { postDecision, postSkip } from '../api'
 import type { AnnotationRecord } from '../annotations/plugin'
 import { buildDecision, isModeValue, MODE_OPTIONS } from '../decision'
 import type { PlanEditorHandle } from './PlanEditor'
+import { ThemeToggle } from './ThemeToggle'
 import type { DeepReadonly } from '../../shared/readonly'
 
 /** Minimal readonly shape of the select's change event (only value is read). */
@@ -101,9 +102,15 @@ type ActionBarViewProps = Readonly<{
 function ActionBarView(props: ActionBarViewProps) {
   return (
     <footer className="mp-actionbar">
-      {props.error !== null && props.error !== '' && (
-        <span className="mp-actionbar__error">{props.error}</span>
-      )}
+      {/* Everything left of the decision buttons. The wrapper owns the
+          margin-right:auto that splits the bar, so the split does not move
+          when the error appears or disappears. */}
+      <div className="mp-actionbar__lead">
+        <ThemeToggle />
+        {props.error !== null && props.error !== '' && (
+          <span className="mp-actionbar__error">{props.error}</span>
+        )}
+      </div>
       <button
         type="button"
         className="mp-button mp-button--ghost"

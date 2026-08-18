@@ -86,6 +86,7 @@ const approve = () => screen.getByRole('button', { name: 'Approve' })
 const requestChanges = () =>
   screen.getByRole('button', { name: 'Request changes' })
 const skip = () => screen.getByRole('button', { name: 'Skip review' })
+const theme = () => screen.getByRole('button', { name: /^Theme:/u })
 
 // oxlint-disable-next-line eslint/max-lines-per-function -- suite groups many independent `it` cases; splitting the describe would only fragment coverage.
 describe('ActionBar', () => {
@@ -183,6 +184,20 @@ describe('ActionBar', () => {
     expect(approve().hasAttribute('disabled')).toBe(true)
     expect(requestChanges().hasAttribute('disabled')).toBe(true)
     expect(skip().hasAttribute('disabled')).toBe(true)
+  })
+
+  it('keeps the theme toggle usable while a decision is in flight', () => {
+    // Every other control locks so a second decision cannot race the first.
+    // This one changes nothing the CLI will ever see, and a reviewer who
+    // triggered a slow send should still be able to read the page.
+    stubFetch()
+    renderBar({ overallFeedback: 'needs work' })
+    expect(theme().hasAttribute('disabled')).toBe(false)
+
+    fireEvent.click(approve())
+
+    expect(skip().hasAttribute('disabled')).toBe(true)
+    expect(theme().hasAttribute('disabled')).toBe(false)
   })
 
   it('surfaces a failed send and re-enables the buttons instead of claiming success', async () => {
