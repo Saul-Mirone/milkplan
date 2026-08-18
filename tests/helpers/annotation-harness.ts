@@ -7,6 +7,7 @@ import {
   annotationPluginKey,
   createAnnotationPlugin,
   type AnnotationAction,
+  type AnnotationPluginConfig,
   type AnnotationRecord,
 } from '../../src/ui/annotations/plugin'
 import type { DeepReadonly } from '../../src/shared/readonly'
@@ -68,17 +69,20 @@ export interface Harness {
   record: (id: string) => DeepReadonly<AnnotationRecord>
   textOf: (from: number, to: number) => string
   decorations: () => readonly Decoration[]
+  activeId: () => string | null
   /** Identity of the plugin state object, for referential-stability checks. */
   pluginStateRef: () => object
 }
 
-export function makeHarness(): Harness {
+export function makeHarness(
+  config?: DeepReadonly<Partial<AnnotationPluginConfig>>,
+): Harness {
   let state = EditorState.create({
     schema,
     doc: makeDoc(),
     // onChange is driven by the plugin's `view`, which only an EditorView
     // creates; with a bare EditorState it is never called.
-    plugins: [createAnnotationPlugin({ onChange: () => {} })],
+    plugins: [createAnnotationPlugin({ onChange: () => {}, ...config })],
   })
 
   const pluginState = () => {
@@ -111,6 +115,7 @@ export function makeHarness(): Harness {
       return found
     },
     textOf: (from, to) => state.doc.textBetween(from, to),
+    activeId: () => pluginState().activeId,
     decorations: () => pluginState().decorations.find(),
     pluginStateRef: () => pluginState(),
   }
