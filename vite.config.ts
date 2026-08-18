@@ -17,6 +17,14 @@ export default defineConfig({
   build: {
     outDir: '../../dist/ui',
     emptyOutDir: true,
+    // The whole theme layer is CSS `light-dark()` — the app palette, the
+    // vendored Crepe palette and shiki's token colors — because that is the
+    // only switch `color-scheme` (and so the theme toggle) can move. Under
+    // Vite's default baseline target Lightning CSS helpfully downlevels it to
+    // a prefers-color-scheme polyfill, which answers to the OS alone and would
+    // leave the toggle doing nothing in the published bundle. These are the
+    // versions that shipped `light-dark()`; tests/dist.test.ts pins the result.
+    cssTarget: ['chrome123', 'edge123', 'firefox120', 'safari17.5'],
   },
   server: {
     port: 5180,

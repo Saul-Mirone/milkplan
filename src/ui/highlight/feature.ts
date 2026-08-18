@@ -37,9 +37,14 @@ const PRELOADED_LANGS = [
   'diff',
 ]
 
+/** Both halves of every token's color; see `createSafeParser`. */
+const LIGHT_THEME = 'github-light'
+const DARK_THEME = 'github-dark'
+
+/** Loads both themes, since every code block is highlighted with both at once. */
 export function loadHighlighter(): Promise<Highlighter> {
   return getSingletonHighlighter({
-    themes: ['github-light', 'github-dark'],
+    themes: [LIGHT_THEME, DARK_THEME],
     langs: PRELOADED_LANGS,
   })
 }
@@ -56,12 +61,21 @@ export interface HighlightFeatureConfig {
  * it. Unknown-but-bundled languages are lazy-loaded instead (returning a
  * Promise makes the plugin refresh once the grammar arrives); anything
  * else is silently skipped.
+ *
+ * Light vs dark is deliberately NOT decided here. Token colors land in
+ * ProseMirror decorations that prosemirror-highlight caches per position,
+ * and nothing external can invalidate that cache — its plugin key is
+ * module-private and its refresh meta only re-parses nodes a transaction
+ * actually changed. So a parser built for one scheme stays on it for the
+ * life of the editor. Emitting `color: light-dark(<light>, <dark>)` instead
+ * hands the choice to CSS, where `color-scheme` on <html> can still move it:
+ * the OS preference by default, or whatever ThemeToggle forces.
  */
-function createSafeParser(
-  highlighter: Readonly<Highlighter>,
-  theme: string,
-): Parser {
-  const base = createParser(highlighter, { theme })
+function createSafeParser(highlighter: Readonly<Highlighter>): Parser {
+  const base = createParser(highlighter, {
+    themes: { light: LIGHT_THEME, dark: DARK_THEME },
+    defaultColor: 'light-dark()',
+  })
   // Per-language load state. While a grammar load is in flight the parser
   // must keep returning the SAME promise: the plugin caches array results
   // (an early [] would freeze the block as unhighlighted forever — Crepe
@@ -103,11 +117,7 @@ export function highlightFeature(
   config?: Readonly<HighlightFeatureConfig>,
 ): void {
   if (!config) return
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches
-  const parser = createSafeParser(
-    config.highlighter,
-    dark ? 'github-dark' : 'github-light',
-  )
+  const parser = createSafeParser(config.highlighter)
   editor
     .config((ctx: DeepReadonly<Ctx>) => {
       ctx.set(highlightPluginConfig.key, { parser })

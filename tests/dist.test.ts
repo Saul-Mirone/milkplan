@@ -71,6 +71,27 @@ describe('the published bundle', () => {
     expect(css).toContain('.mp-diff-overlay .milkdown .milkdown-diff-controls')
   })
 
+  it('ships light-dark() intact rather than a prefers-color-scheme polyfill', async () => {
+    // Load-bearing canary. Every themed color — the app palette, the vendored
+    // Crepe palette, and shiki's code-block tokens — is a `light-dark()` so
+    // that `color-scheme` on <html> is the single switch the theme toggle can
+    // move. Under Vite's default baseline cssTarget, Lightning CSS downlevels
+    // `light-dark()` into --lightningcss-* vars gated on a
+    // (prefers-color-scheme: dark) media query, which answers to the OS alone:
+    // the source stays correct, `pnpm dev` stays correct, and the published
+    // bundle silently ignores the toggle. vite.config.ts raises cssTarget to
+    // stop that; this proves it is still raised.
+    const assets = new URL('../dist/ui/assets/', import.meta.url)
+    const names = await readdir(assets)
+    const cssName = names.find((name) => /^index-.*\.css$/u.test(name))
+    expect(cssName).toBeDefined()
+
+    const css = await readFile(new URL(String(cssName), assets), 'utf8')
+    expect(css).toContain('light-dark(')
+    expect(css).not.toContain('lightningcss-light')
+    expect(css).not.toContain('prefers-color-scheme')
+  })
+
   it('documents the current version in the pinned hook example', async () => {
     // README shows the exact JSON `init --project --shared` commits for a whole
     // team, and it is the one copy of the release identity no import can reach
