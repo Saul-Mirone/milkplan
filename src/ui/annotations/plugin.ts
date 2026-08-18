@@ -12,6 +12,7 @@ import {
 import type { Node } from '@milkdown/kit/prose/model'
 
 import type { DeepReadonly } from '../../shared/readonly'
+import { seedRecords, type AnnotationSeed } from './seed'
 
 export interface AnnotationRecord {
   id: string
@@ -49,6 +50,8 @@ export type AnnotationAction =
 
 export interface AnnotationPluginConfig {
   onChange: (state: DeepReadonly<AnnotationState>) => void
+  /** Records to rebuild in `state.init`; invalid anchors become orphans. */
+  initialAnnotations?: readonly DeepReadonly<AnnotationSeed>[]
 }
 
 export const annotationPluginKey = new PluginKey<AnnotationState>(
@@ -208,7 +211,17 @@ export function createAnnotationPlugin(
   return new Plugin<AnnotationState>({
     key: annotationPluginKey,
     state: {
-      init: () => emptyAnnotationState,
+      // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- ProseMirror hands init the mutable EditorState.
+      init: (_initConfig, instance) => {
+        const seeds = config.initialAnnotations ?? []
+        if (seeds.length === 0) return emptyAnnotationState
+        const annotations = seedRecords(instance.doc, seeds)
+        return {
+          annotations,
+          activeId: null,
+          decorations: buildDecorations(instance.doc, annotations, null),
+        }
+      },
       apply: applyAnnotationState,
     },
     props: {

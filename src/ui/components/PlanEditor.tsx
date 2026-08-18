@@ -14,6 +14,7 @@ import {
 import type { DeepReadonly } from '../../shared/readonly'
 import { annotationFeature } from '../annotations/feature'
 import type { AnnotationState } from '../annotations/plugin'
+import type { AnnotationSeed } from '../annotations/seed'
 import { highlightFeature, loadHighlighter } from '../highlight/feature'
 
 const annotateIcon = `
@@ -36,11 +37,22 @@ export interface PlanEditorHandle {
   getMarkdown: () => string
   /** Compared against the post-parse baseline, never the original file. */
   isEdited: () => boolean
+  /** The baseline isEdited() compares against; null until create() settles. */
+  getBaseline: () => string | null
   getView: () => EditorView | null
 }
 
 interface PlanEditorProps {
   readonly defaultValue: string
+  /**
+   * Post-parse baseline override for isEdited(). Pass the ORIGINAL plan's
+   * baseline when defaultValue is a restored draft, or isEdited() would
+   * silently reset to the draft and approve would drop the edits. Null =
+   * capture from create(), i.e. defaultValue IS the original plan.
+   */
+  readonly baseline?: string | null
+  /** Persisted records the annotation plugin rebuilds at init. */
+  readonly initialAnnotations?: readonly DeepReadonly<AnnotationSeed>[]
   readonly onAnnotationsChange: AnnotationsChange
   readonly onAnnotate: (range: AnnotateRange) => void
   readonly ref: Ref<PlanEditorHandle>
@@ -48,7 +60,11 @@ interface PlanEditorProps {
 
 type EditorCallbacks = Pick<
   PlanEditorProps,
-  'defaultValue' | 'onAnnotationsChange' | 'onAnnotate'
+  | 'defaultValue'
+  | 'baseline'
+  | 'initialAnnotations'
+  | 'onAnnotationsChange'
+  | 'onAnnotate'
 >
 
 /** Builds the (not-yet-created) Crepe instance, including the annotate toolbar. */
@@ -91,6 +107,10 @@ function createCrepe(
 interface EditorBootstrap {
   readonly root: HTMLElement
   readonly defaultValue: string
+  readonly baseline: string | null
+  readonly initialAnnotations:
+    | readonly DeepReadonly<AnnotationSeed>[]
+    | undefined
   readonly isCancelled: () => boolean
   // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- receives the mutable Crepe instance for teardown.
   readonly onCreated: (instance: Crepe) => void
@@ -121,12 +141,13 @@ async function bootstrapEditor(opts: EditorBootstrap): Promise<void> {
     onChange: (state) => {
       opts.onAnnotationsChangeRef.current(state)
     },
+    initialAnnotations: opts.initialAnnotations,
   })
   instance.addFeature(highlightFeature, { highlighter })
 
   await instance.create()
   if (opts.isCancelled()) return
-  opts.baselineRef.current = instance.getMarkdown()
+  opts.baselineRef.current = opts.baseline ?? instance.getMarkdown()
   opts.crepeRef.current = instance
   if (import.meta.env.DEV) {
     // Dev-only handle for E2E automation: synthetic DOM selections do not
@@ -137,64 +158,112 @@ async function bootstrapEditor(opts: EditorBootstrap): Promise<void> {
   }
 }
 
+/** A ref that always holds the latest value, for one-shot closures. */
+function useLatest<T>(value: T): RefObject<T> {
+  const ref = useRef(value)
+  ref.current = value
+  return ref
+}
+
 /**
  * Owns the Crepe lifecycle: builds the editor asynchronously, mirrors callbacks
  * through refs so the one-shot closures stay current, and tears everything down
  * on unmount.
  */
-function useCrepeEditor(options: EditorCallbacks) {
-  const { defaultValue, onAnnotate, onAnnotationsChange } = options
-  const rootRef = useRef<HTMLDivElement>(null)
-  const crepeRef = useRef<Crepe | null>(null)
-  const baselineRef = useRef<string | null>(null)
-  const onAnnotateRef = useRef(onAnnotate)
-  onAnnotateRef.current = onAnnotate
-  const onAnnotationsChangeRef = useRef(onAnnotationsChange)
-  onAnnotationsChangeRef.current = onAnnotationsChange
+interface EditorRefs {
+  readonly rootRef: RefObject<HTMLDivElement | null>
+  readonly crepeRef: RefObject<Crepe | null>
+  readonly baselineRef: RefObject<string | null>
+}
+
+/** Starts the async bootstrap; the returned cleanup cancels and destroys. */
+function launchEditor(
+  // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- carries the same mutable React refs as EditorBootstrap.
+  opts: Omit<EditorBootstrap, 'isCancelled' | 'onCreated'>,
+): () => void {
+  let cancelled = false
+  let crepe: Crepe | null = null
+  const created = bootstrapEditor({
+    ...opts,
+    isCancelled: () => cancelled,
+    // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- captures the freshly built mutable Crepe instance for teardown.
+    onCreated: (instance) => {
+      crepe = instance
+    },
+  })
+  return () => {
+    cancelled = true
+    opts.crepeRef.current = null
+    opts.baselineRef.current = null
+    void created
+      .catch(() => undefined)
+      .then(() => crepe?.destroy())
+      .catch(() => undefined)
+  }
+}
+
+// oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- carries mutable React refs the bootstrap writes into.
+function useCrepeLifecycle(options: EditorCallbacks, refs: EditorRefs) {
+  const {
+    defaultValue,
+    baseline,
+    initialAnnotations,
+    onAnnotate,
+    onAnnotationsChange,
+  } = options
+  const { rootRef, crepeRef, baselineRef } = refs
+  const onAnnotateRef = useLatest(onAnnotate)
+  const onAnnotationsChangeRef = useLatest(onAnnotationsChange)
 
   useEffect(() => {
     const root = rootRef.current
     if (!root) return undefined
-
-    let cancelled = false
-    let crepe: Crepe | null = null
-    const created = bootstrapEditor({
+    return launchEditor({
       root,
       defaultValue,
-      isCancelled: () => cancelled,
-      // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- captures the freshly built mutable Crepe instance for teardown.
-      onCreated: (instance) => {
-        crepe = instance
-      },
+      baseline: baseline ?? null,
+      initialAnnotations,
       onAnnotateRef,
       onAnnotationsChangeRef,
       baselineRef,
       crepeRef,
     })
+    // Refs are identity-stable; baseline / initialAnnotations are one-shot
+    // init inputs whose callers pass identity-stable values — only a
+    // defaultValue change can rebuild the editor mid-review.
+  }, [
+    defaultValue,
+    baseline,
+    initialAnnotations,
+    rootRef,
+    crepeRef,
+    baselineRef,
+    onAnnotateRef,
+    onAnnotationsChangeRef,
+  ])
+}
 
-    return () => {
-      cancelled = true
-      crepeRef.current = null
-      baselineRef.current = null
-      void created
-        .catch(() => undefined)
-        .then(() => crepe?.destroy())
-        .catch(() => undefined)
-    }
-  }, [defaultValue])
-
+function useCrepeEditor(options: EditorCallbacks) {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const crepeRef = useRef<Crepe | null>(null)
+  const baselineRef = useRef<string | null>(null)
+  useCrepeLifecycle(options, { rootRef, crepeRef, baselineRef })
   return { rootRef, crepeRef, baselineRef }
 }
 
 // oxlint-disable-next-line typescript/prefer-readonly-parameter-types -- `ref` (React Ref) is structurally mutable and forwarded to useImperativeHandle.
 export function PlanEditor({
   defaultValue,
+  baseline,
+  initialAnnotations,
   onAnnotationsChange,
   onAnnotate,
   ref,
 }: PlanEditorProps) {
   const { rootRef, crepeRef, baselineRef } = useCrepeEditor({
     defaultValue,
+    baseline,
+    initialAnnotations,
     onAnnotationsChange,
     onAnnotate,
   })
@@ -203,11 +272,12 @@ export function PlanEditor({
     ref,
     () => ({
       getMarkdown: () => crepeRef.current?.getMarkdown() ?? defaultValue,
+      getBaseline: () => baselineRef.current,
       isEdited: () => {
         const crepe = crepeRef.current
-        const baseline = baselineRef.current
-        if (!crepe || baseline === null) return false
-        return crepe.getMarkdown() !== baseline
+        const parseBaseline = baselineRef.current
+        if (!crepe || parseBaseline === null) return false
+        return crepe.getMarkdown() !== parseBaseline
       },
       getView: () => {
         const crepe = crepeRef.current

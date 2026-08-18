@@ -54,6 +54,7 @@ function handle(markdown: string, edited: boolean): PlanEditorHandle {
   return {
     getMarkdown: () => markdown,
     isEdited: () => edited,
+    getBaseline: () => (edited ? '# baseline' : markdown),
     getView: () => null,
   }
 }
