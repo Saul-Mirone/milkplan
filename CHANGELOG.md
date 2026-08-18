@@ -1,5 +1,31 @@
 # @enorim/milkplan
 
+## 0.0.5
+
+### Patch Changes
+
+- [#15](https://github.com/Saul-Mirone/milkplan/pull/15) [`46c91d7`](https://github.com/Saul-Mirone/milkplan/commit/46c91d7fc58c2b33a9a5477d369b4c8a4713e3c1) Thanks [@Saul-Mirone](https://github.com/Saul-Mirone)! - Refreshing the review page no longer throws your work away. Annotations, edits
+  to the plan, and the overall feedback are saved as a draft (in the browser's
+  localStorage, debounced behind your typing) and restored when the page loads —
+  a reload, a second tab, or `milkplan open` after closing the tab all come back
+  to where you left off. Deciding (approve, request changes, or skip) clears the
+  draft; abandoned drafts expire after 30 days.
+
+  Restored annotations are validated against the text they were anchored to: a
+  draft from an earlier round is ignored rather than restored against the wrong
+  plan, and a record whose anchor no longer matches comes back as an orphan
+  instead of highlighting the wrong words.
+
+- [#13](https://github.com/Saul-Mirone/milkplan/pull/13) [`be4fae4`](https://github.com/Saul-Mirone/milkplan/commit/be4fae4f303139d493f9b74812a83ad70901110e) Thanks [@Saul-Mirone](https://github.com/Saul-Mirone)! - Fix code blocks keeping the theme they were loaded with. Everything else in the
+  review page followed the OS switching between light and dark, but the syntax
+  colors were picked once at editor setup and baked into decorations nothing could
+  invalidate afterwards. Every token now carries both palettes and CSS chooses at
+  paint time, so a code block re-themes with the rest of the page.
+
+  The bottom bar also gets a theme button, cycling System → Light → Dark, if you
+  would rather not review a plan in whatever your OS happens to be set to. The
+  choice is remembered for later reviews.
+
 ## 0.0.4
 
 ### Patch Changes
